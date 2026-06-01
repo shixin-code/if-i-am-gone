@@ -1,0 +1,14 @@
+services:
+  ifgone:
+    build: .
+    image: if-i-am-gone:latest
+    container_name: ifgone
+    restart: unless-stopped          # 进程崩溃/VPS 重启后自动拉起
+    env_file: .env                   # 注入 ${TELEGRAM_BOT_TOKEN} / ${SMTP_PASSWORD} 等
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro      # 配置只读
+      - ./data/source:/data/source:ro          # 待保护文件只读挂载
+      - ./data/state:/data/state               # 状态/加密包/日志可写
+    # 仅在 download.mode=self_hosted 时需要暴露端口
+    ports:
+      - "8080:8080"

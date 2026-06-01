@@ -1,0 +1,22 @@
+# 敏感凭据 —— 绝不入库
+.env
+
+# 运行时数据卷（state.db、加密包、日志、用户源文件）
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.zip
+
+# 本地真实配置（只提交 config.example.yaml）
+config.yaml
+
+# 编译产物
+/ifgone
+/bin/
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store
