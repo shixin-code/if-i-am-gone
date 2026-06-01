@@ -22,7 +22,7 @@ type Notifier interface {
 	SendCheckin(token string) error
 	// SendFinalWarning 发送高优先级的最后强提醒（Telegram）。
 	SendFinalWarning() error
-	// SendHeartbeat 发送「系统正常运行中」心跳（Telegram）。
+	// SendHeartbeat 发送服务巡检心跳（Telegram）。
 	SendHeartbeat() error
 	// SendMessageSafe 发送一条任意文本 Telegram 消息（如取消通知）。
 	SendMessageSafe(text string) error
@@ -93,7 +93,7 @@ func (s *Scheduler) Confirm(now time.Time, token string) (accepted bool, err err
 		if err := s.store.ClearDeliveries(); err != nil {
 			return false, err
 		}
-		_ = s.notifier.SendMessageSafe("✅ 已收到你的确认，传递流程已取消，一切恢复正常。")
+		_ = s.notifier.SendMessageSafe("已收到本轮确认，后续流程已暂停。")
 	}
 	_ = s.store.Audit("user_confirmed", fmt.Sprintf("from_phase_triggering=%v", wasTriggering), now)
 	s.logf("用户已确认，状态重置为 ALIVE（之前处于触发流程=%v）", wasTriggering)

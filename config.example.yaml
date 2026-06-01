@@ -64,8 +64,8 @@ logging:
 
 templates:
   zh:
-    checkin_telegram: "你还活着吗？请点击下方按钮确认。若长期不确认，系统将在若干天后开始向家人传递信息。"
-    final_warning_telegram: "⚠️ 最后提醒：你已连续多次未确认。若仍不确认，系统将很快开始向家人传递信息。请尽快点击最新确认消息中的按钮。"
+    checkin_telegram: "定期安全确认：如果你一切正常，请点击下方按钮完成本轮确认。"
+    final_warning_telegram: "安全确认即将超时：系统已连续多轮未收到确认。若你一切正常，请尽快点击最新确认消息中的按钮，系统会暂停后续流程。"
     warn_email_subject: "[重要] 一封预定的信息"
     warn_email_body: |
       您好 {name}，
@@ -95,8 +95,8 @@ templates:
       {url}
       请用此前收到的密码，并用 7-Zip 或 WinRAR 解压。
   en:
-    checkin_telegram: "Are you alive? Tap the button below to confirm. If you stop confirming, the system will begin delivering information to your family after some days."
-    final_warning_telegram: "⚠️ Final reminder: you have missed several check-ins. If you do not confirm soon, the system will start delivering information to your family. Please tap the button in the latest message."
+    checkin_telegram: "Regular safety check-in: if everything is okay, tap the button below to complete this round."
+    final_warning_telegram: "Safety check-in is about to time out: several rounds have passed without confirmation. If everything is okay, please tap the button in the latest check-in message to pause the follow-up flow."
     warn_email_subject: "[Important] A pre-arranged message"
     warn_email_body: |
       Hello {name},

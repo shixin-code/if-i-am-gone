@@ -31,7 +31,7 @@ func (n *Notifier) SendCheckin(token string) error {
 	t := n.cfg.Lang("zh")
 	text := t.CheckinTelegram
 	if text == "" {
-		text = "你还活着吗？请点击下方按钮确认。"
+		text = "定期安全确认：如果你一切正常，请点击下方按钮完成本轮确认。"
 	}
 	return n.bot.SendCheckin(text, token)
 }
@@ -40,13 +40,13 @@ func (n *Notifier) SendFinalWarning() error {
 	t := n.cfg.Lang("zh")
 	text := t.FinalWarningTelegram
 	if text == "" {
-		text = "⚠️ 最后提醒：你已连续多次未确认。若仍不确认，系统将开始向家人传递信息。"
+		text = "安全确认即将超时：系统已连续多轮未收到确认。若你一切正常，请尽快点击最新确认消息中的按钮，系统会暂停后续流程。"
 	}
 	return n.bot.SendMessage(text)
 }
 
 func (n *Notifier) SendHeartbeat() error {
-	return n.bot.SendMessage("💓 系统正常运行中。若长期收不到此消息，请检查服务器是否在线。")
+	return n.bot.SendMessage("系统巡检正常：服务正在按计划运行。若长期收不到此消息，请检查服务器是否在线。")
 }
 
 func (n *Notifier) SendMessageSafe(text string) error {

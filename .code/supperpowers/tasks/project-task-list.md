@@ -85,9 +85,11 @@
   - 涉及文件：`internal/scheduler/scheduler.go`、`internal/scheduler/scheduler_test.go`。
   - 验证：`go test ./internal/scheduler -run TestStageWaitsForFailedDeliveriesBeforeProgressing -v`、`go test ./...` 通过。
 
-- `[未完成]` 真实 Telegram 联调任务。
-  - 目标：使用真实 Bot Token 和 chat_id 验证确认消息、按钮回调、非授权 chat_id 忽略、旧 token 失效。
-  - 产物：联调记录或 README 操作步骤。
+- `[已完成]` 真实 Telegram 联调任务。
+  - 验证结果：`getMe` 成功，真实 chat_id `sendMessage` 成功，本地应用发送确认按钮成功，点击按钮后 Scheduler 接受回调并重置为 `ALIVE`。
+  - 验证时间：2026-06-01。
+  - 证据：`data/state/app.log` 中出现 `用户已确认，状态重置为 ALIVE`；`state.db` 当前状态为 `ALIVE`、`miss_count=0`、`pending_token` 已清空。
+  - 备注：非授权 chat_id 忽略与旧 token 失效尚未做真实人工攻击演练，已有代码路径与单元测试覆盖 token 防重放。
 
 - `[未完成]` 真实 SMTP 联调任务。
   - 目标：验证 465 SSL 与 587 STARTTLS 中至少一种真实邮箱可发，确认中文标题、正文、附件在常见邮箱客户端显示正常。

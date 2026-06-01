@@ -43,11 +43,11 @@ func New(token string, chatID int64) *Bot {
 // callbackConfirmPrefix 是确认按钮 callback_data 的前缀，后接一次性 token。
 const callbackConfirmPrefix = "confirm:"
 
-// SendCheckin 发送一条带「我还活着 ✅」按钮的确认消息，按钮回调携带 token。
+// SendCheckin 发送一条带确认按钮的消息，按钮回调携带 token。
 func (b *Bot) SendCheckin(text, token string) error {
 	keyboard := map[string]any{
 		"inline_keyboard": [][]map[string]string{{
-			{"text": "我还活着 ✅ / I'm alive", "callback_data": callbackConfirmPrefix + token},
+			{"text": "确认正常 / I'm OK", "callback_data": callbackConfirmPrefix + token},
 		}},
 	}
 	kbJSON, _ := json.Marshal(keyboard)
