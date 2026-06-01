@@ -177,10 +177,18 @@ func (s *Scheduler) tickAlive(st *state.State, now time.Time) error {
 
 func (s *Scheduler) tickPendingTrigger(st *state.State, now time.Time) error {
 	if s.due(st.FinalWarningAt, s.cfg.Intervals.FinalGrace.Std(), now) {
+		allDelivered := true
 		for _, b := range s.cfg.Beneficiaries {
-			s.deliver(b.Email, state.StageWarn, now, func() error {
+			if !s.deliver(b.Email, state.StageWarn, now, func() error {
 				return s.notifier.DeliverWarn(b)
-			})
+			}) {
+				allDelivered = false
+			}
+		}
+		if !allDelivered {
+			_ = s.store.Audit("warn_delivery_waiting_retry", "部分预警邮件投递失败，暂不推进阶段", now)
+			s.logf("部分预警邮件投递失败，保持 PENDING_TRIGGER 等待重试")
+			return s.store.Save(st)
 		}
 		st.Phase = state.PhaseWarned
 		st.WarnedAt = ptr(now)
@@ -193,10 +201,18 @@ func (s *Scheduler) tickPendingTrigger(st *state.State, now time.Time) error {
 func (s *Scheduler) tickWarned(st *state.State, now time.Time) error {
 	if s.due(st.WarnedAt, s.cfg.Intervals.PasswordDelay.Std(), now) {
 		password := st.CurrentArchivePassword // 迭代2 起这里可能是加密的，由 notifier 层解密
+		allDelivered := true
 		for _, b := range s.cfg.Beneficiaries {
-			s.deliver(b.Email, state.StagePassword, now, func() error {
+			if !s.deliver(b.Email, state.StagePassword, now, func() error {
 				return s.notifier.DeliverPassword(b, password)
-			})
+			}) {
+				allDelivered = false
+			}
+		}
+		if !allDelivered {
+			_ = s.store.Audit("password_delivery_waiting_retry", "部分密码邮件投递失败，暂不推进阶段", now)
+			s.logf("部分密码邮件投递失败，保持 WARNED 等待重试")
+			return s.store.Save(st)
 		}
 		st.Phase = state.PhasePasswordSent
 		st.PasswordSentAt = ptr(now)
@@ -208,10 +224,18 @@ func (s *Scheduler) tickWarned(st *state.State, now time.Time) error {
 
 func (s *Scheduler) tickPasswordSent(st *state.State, now time.Time) error {
 	if s.due(st.PasswordSentAt, s.cfg.Intervals.FileDelay.Std(), now) {
+		allDelivered := true
 		for _, b := range s.cfg.Beneficiaries {
-			s.deliver(b.Email, state.StageFile, now, func() error {
+			if !s.deliver(b.Email, state.StageFile, now, func() error {
 				return s.notifier.DeliverFile(b, st.CurrentArchivePath, st.CurrentArchivePassword)
-			})
+			}) {
+				allDelivered = false
+			}
+		}
+		if !allDelivered {
+			_ = s.store.Audit("file_delivery_waiting_retry", "部分文件邮件投递失败，暂不推进阶段", now)
+			s.logf("部分文件邮件投递失败，保持 PASSWORD_SENT 等待重试")
+			return s.store.Save(st)
 		}
 		st.Phase = state.PhaseFileSent
 		st.FileSentAt = ptr(now)
@@ -232,22 +256,29 @@ func (s *Scheduler) tickTerminal(st *state.State, now time.Time) error {
 }
 
 // deliver 执行一次幂等投递：已成功则跳过，否则调用 fn 并记录结果。
-func (s *Scheduler) deliver(email string, stage state.Stage, now time.Time, fn func() error) {
+// 返回 true 表示该受益人的该阶段已成功完成，可用于判断阶段是否能推进。
+func (s *Scheduler) deliver(email string, stage state.Stage, now time.Time, fn func() error) bool {
 	done, err := s.store.AlreadyDelivered(email, stage)
 	if err != nil {
 		s.logf("查询投递记录失败 (%s/%s): %v", email, stage, err)
-		return
+		return false
 	}
 	if done {
-		return
+		return true
 	}
 	if err := fn(); err != nil {
 		s.logf("投递失败 (%s/%s): %v", email, stage, err)
-		_ = s.store.RecordDelivery(email, stage, "FAILED", err.Error(), now)
-		return
+		if recordErr := s.store.RecordDelivery(email, stage, "FAILED", err.Error(), now); recordErr != nil {
+			s.logf("记录投递失败状态失败 (%s/%s): %v", email, stage, recordErr)
+		}
+		return false
 	}
-	_ = s.store.RecordDelivery(email, stage, "OK", "", now)
+	if err := s.store.RecordDelivery(email, stage, "OK", "", now); err != nil {
+		s.logf("记录投递成功状态失败 (%s/%s): %v", email, stage, err)
+		return false
+	}
 	s.logf("投递成功 (%s/%s)", email, stage)
+	return true
 }
 
 func (s *Scheduler) doPack(st *state.State, now time.Time) error {

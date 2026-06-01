@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,6 +23,9 @@ type fakeNotifier struct {
 	warnSent      map[string]int
 	passwordSent  map[string]int
 	fileSent      map[string]int
+	failWarn      map[string]bool
+	failPassword  map[string]bool
+	failFile      map[string]bool
 	lastPassword  string
 }
 
@@ -30,22 +34,37 @@ func newFakeNotifier() *fakeNotifier {
 		warnSent:     map[string]int{},
 		passwordSent: map[string]int{},
 		fileSent:     map[string]int{},
+		failWarn:     map[string]bool{},
+		failPassword: map[string]bool{},
+		failFile:     map[string]bool{},
 	}
 }
 
-func (f *fakeNotifier) SendCheckin(token string) error          { f.checkins++; return nil }
-func (f *fakeNotifier) SendFinalWarning() error                 { f.finalWarnings++; return nil }
-func (f *fakeNotifier) SendHeartbeat() error                    { f.heartbeats++; return nil }
-func (f *fakeNotifier) SendMessageSafe(text string) error       { f.messages++; return nil }
-func (f *fakeNotifier) SendOwnerAlert() error                   { f.ownerAlerts++; return nil }
-func (f *fakeNotifier) DeliverWarn(b config.Beneficiary) error  { f.warnSent[b.Email]++; return nil }
+func (f *fakeNotifier) SendCheckin(token string) error    { f.checkins++; return nil }
+func (f *fakeNotifier) SendFinalWarning() error           { f.finalWarnings++; return nil }
+func (f *fakeNotifier) SendHeartbeat() error              { f.heartbeats++; return nil }
+func (f *fakeNotifier) SendMessageSafe(text string) error { f.messages++; return nil }
+func (f *fakeNotifier) SendOwnerAlert() error             { f.ownerAlerts++; return nil }
+func (f *fakeNotifier) DeliverWarn(b config.Beneficiary) error {
+	f.warnSent[b.Email]++
+	if f.failWarn[b.Email] {
+		return errors.New("warn delivery failed")
+	}
+	return nil
+}
 func (f *fakeNotifier) DeliverPassword(b config.Beneficiary, password string) error {
 	f.passwordSent[b.Email]++
+	if f.failPassword[b.Email] {
+		return errors.New("password delivery failed")
+	}
 	f.lastPassword = password
 	return nil
 }
 func (f *fakeNotifier) DeliverFile(b config.Beneficiary, archivePath, password string) error {
 	f.fileSent[b.Email]++
+	if f.failFile[b.Email] {
+		return errors.New("file delivery failed")
+	}
 	return nil
 }
 
@@ -232,6 +251,43 @@ func TestDowntimeReplay(t *testing.T) {
 	}
 }
 
+// 阶段内有受益人投递失败时，状态不能推进；下一拍只重试失败项，全部成功后再推进。
+func TestStageWaitsForFailedDeliveriesBeforeProgressing(t *testing.T) {
+	s, store, n, _ := newTestScheduler(t)
+	setConfirmed(t, store, base)
+
+	tNow := base.Add(30 * 24 * time.Hour)
+	_ = s.Tick(tNow) // → PENDING_TRIGGER
+	tNow = tNow.Add(49 * time.Hour)
+
+	n.failWarn["b@example.com"] = true
+	if err := s.Tick(tNow); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Load()
+	if st.Phase != state.PhasePendingTrigger {
+		t.Fatalf("预警投递部分失败时应保持 PENDING_TRIGGER，实际 %s", st.Phase)
+	}
+	if n.warnSent["a@example.com"] != 1 || n.warnSent["b@example.com"] != 1 {
+		t.Fatalf("首次投递次数不对: a=%d b=%d", n.warnSent["a@example.com"], n.warnSent["b@example.com"])
+	}
+
+	n.failWarn["b@example.com"] = false
+	if err := s.Tick(tNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = store.Load()
+	if st.Phase != state.PhaseWarned {
+		t.Fatalf("失败项重试成功后应进入 WARNED，实际 %s", st.Phase)
+	}
+	if n.warnSent["a@example.com"] != 1 {
+		t.Fatalf("已成功投递的受益人不应重复发送，a=%d", n.warnSent["a@example.com"])
+	}
+	if n.warnSent["b@example.com"] != 2 {
+		t.Fatalf("失败受益人应重试一次，b=%d", n.warnSent["b@example.com"])
+	}
+}
+
 // 触发流程中任意阶段确认应立即取消，回到 ALIVE，后续不再投递。
 func TestConfirmDuringTriggerCancels(t *testing.T) {
 	s, store, n, _ := newTestScheduler(t)
@@ -239,9 +295,9 @@ func TestConfirmDuringTriggerCancels(t *testing.T) {
 	tNow := base.Add(30 * 24 * time.Hour)
 
 	// 推进到 WARNED：先进 PENDING_TRIGGER，再越过 final_grace。
-	_ = s.Tick(tNow)                    // → PENDING_TRIGGER（记 final_warning_at）
-	tNow = tNow.Add(49 * time.Hour)     // 越过 final_grace(48h)
-	_ = s.Tick(tNow)                    // → WARNED
+	_ = s.Tick(tNow)                // → PENDING_TRIGGER（记 final_warning_at）
+	tNow = tNow.Add(49 * time.Hour) // 越过 final_grace(48h)
+	_ = s.Tick(tNow)                // → WARNED
 	st, _ := store.Load()
 	if st.Phase != state.PhaseWarned {
 		t.Fatalf("应处于 WARNED，实际 %s", st.Phase)

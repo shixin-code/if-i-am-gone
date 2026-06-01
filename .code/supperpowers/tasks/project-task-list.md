@@ -79,10 +79,11 @@
 
 ## MVP 收尾与可靠性加固
 
-- `[未完成]` 投递失败后的阶段推进策略修正。
-  - 当前情况：单个或多个受益人投递失败时会记录 `FAILED`，但状态仍可能推进到下一阶段。
-  - 目标：明确策略并实现。建议至少保证关键阶段全部 `OK` 后再推进，或引入可配置的重试/跳过策略。
+- `[已完成]` 投递失败后的阶段推进策略修正。
+  - 当前行为：单个或多个受益人投递失败时会记录 `FAILED`，并保持当前阶段等待后续 tick 重试；已成功投递的受益人不会重复发送。
+  - 实现策略：每个阶段必须全部受益人对应投递记录为成功后才推进到下一阶段。
   - 涉及文件：`internal/scheduler/scheduler.go`、`internal/scheduler/scheduler_test.go`。
+  - 验证：`go test ./internal/scheduler -run TestStageWaitsForFailedDeliveriesBeforeProgressing -v`、`go test ./...` 通过。
 
 - `[未完成]` 真实 Telegram 联调任务。
   - 目标：使用真实 Bot Token 和 chat_id 验证确认消息、按钮回调、非授权 chat_id 忽略、旧 token 失效。
