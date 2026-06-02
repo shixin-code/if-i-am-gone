@@ -2,7 +2,7 @@
 
 更新时间：2026-06-02
 
-本文用于在 VPS 故障、容器重建、误删数据或迁移服务器时恢复 `if-i-am-gone`。
+本文用于在 VPS 故障、服务重建、误删数据或迁移服务器时恢复 `if-i-am-gone`。推荐按原生 systemd 部署恢复；Docker 可作为可选路径。
 
 ## 必须备份的内容
 
@@ -17,11 +17,33 @@
 
 ## 恢复步骤
 
-1. 在新服务器安装 Docker 或 Go 运行环境。
-2. 恢复 `config.yaml`、`.env`、`data/source/`、`data/state/` 到原路径或同步修改配置路径。
+1. 在新服务器安装 Go 运行环境，或上传已经为目标架构编译好的 `ifgone`、`ifgonectl` 二进制。
+2. 按 `docs/native-systemd-deploy.md` 创建 `ifgone` 用户、`/opt/ifgone` 目录和 systemd service。
+3. 恢复 `config.yaml`、`.env`、`data/source/`、`data/state/` 到原路径或同步修改配置路径。
+4. 确认 `/opt/ifgone`、`data/source/`、`data/state/` 属主和权限正确。
+5. 确认 `.env` 中的 `MASTER_PASSPHRASE` 与原环境一致。
+6. 确认 `download.self_hosted.public_base_url` 指向新服务器可访问的 HTTPS 地址。
+7. 启动服务：`sudo systemctl enable --now ifgone`。
+8. 查看日志确认 state 打开成功、Telegram polling 启动、self_hosted 下载服务启动。
+9. 发送一次 Telegram 确认，确认 Bot 回调正常。
+
+常用 systemd 恢复命令：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now ifgone
+sudo systemctl status ifgone
+journalctl -u ifgone -f
+sudo -u ifgone /opt/ifgone/ifgonectl status --config /opt/ifgone/config.yaml
+```
+
+如果选择 Docker 恢复：
+
+1. 在新服务器安装 Docker 和 docker compose。
+2. 恢复 `config.yaml`、`.env`、`data/source/`、`data/state/` 到项目目录。
 3. 确认 `.env` 中的 `MASTER_PASSPHRASE` 与原环境一致。
 4. 确认 `download.self_hosted.public_base_url` 指向新服务器可访问的 HTTPS 地址。
-5. 启动服务：`docker compose up -d --build` 或运行本地二进制。
+5. 启动服务：`docker compose up -d --build`。
 6. 查看日志确认 state 打开成功、Telegram polling 启动、self_hosted 下载服务启动。
 7. 发送一次 Telegram 确认，确认 Bot 回调正常。
 
@@ -45,11 +67,12 @@
 
 ### Telegram Bot Token 或 SMTP 授权码失效
 
-更新 `.env` 后重启服务。重启不会清空 state，投递幂等记录仍会保留。
+更新 `.env` 后重启服务。原生部署使用 `sudo systemctl restart ifgone`；Docker 部署使用 `docker compose restart ifgone`。重启不会清空 state，投递幂等记录仍会保留。
 
 ## 恢复后检查清单
 
 - `go test ./...` 或镜像构建测试通过。
+- `systemctl status ifgone` 显示服务正在运行，或 Docker 容器状态为 `Up`。
 - 服务日志没有配置校验错误。
 - Telegram 确认消息可发送，按钮回调可收到确认。
 - SMTP 可发送测试邮件。

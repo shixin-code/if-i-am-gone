@@ -47,7 +47,17 @@ go build ./cmd/ifgone
 详细演练步骤见 [`docs/quick-flow-drill.md`](docs/quick-flow-drill.md)。
 真实 Telegram、SMTP、self_hosted 或 S3-compatible 下载链路的最终验收见 [`docs/real-flow-integration-checklist.md`](docs/real-flow-integration-checklist.md)。
 
-## 部署（VPS + Docker）
+## 部署（推荐 VPS 原生 systemd）
+
+```bash
+go test ./...
+go build -o ifgone ./cmd/ifgone
+go build -o ifgonectl ./cmd/ifgonectl
+```
+
+推荐把二进制、配置、`.env` 和数据目录放到 `/opt/ifgone/`，再由 systemd 托管长期运行。完整步骤见 [`docs/native-systemd-deploy.md`](docs/native-systemd-deploy.md)，首次部署逐项检查见 [`docs/deploy-checklist.md`](docs/deploy-checklist.md)。
+
+Docker 仍保留为可选部署/测试路径：
 
 ```bash
 cp config.example.yaml config.yaml && cp .env.example .env   # 编辑两者
@@ -56,8 +66,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-`docker-compose.yml` 已配置 `restart: unless-stopped`，进程崩溃或 VPS 重启后自动拉起。
-`.dockerignore` 会排除 `.env`、`config.yaml`、`data/`、数据库、归档和构建产物，避免真实敏感文件进入 Docker build 上下文。
+`docker-compose.yml` 已配置 `restart: unless-stopped`，进程崩溃或 VPS 重启后自动拉起。`.dockerignore` 会排除 `.env`、`config.yaml`、`data/`、数据库、归档和构建产物，避免真实敏感文件进入 Docker build 上下文。
 
 ## 配置
 
@@ -123,11 +132,11 @@ go build ./cmd/ifgonectl
 
 - **系统心跳**：每 7 天给你发「系统正常运行中」。长期收不到 = VPS 可能挂了，请检查。
 - **外部探活 ping**：可配置 `reliability.healthcheck`，让程序定时访问 healthchecks.io 等第三方 ping URL；失败只记录日志和审计，不影响核心投递。
-- 已开启 SQLite WAL 崩溃安全写、单拍 tick 异常隔离、`restart: unless-stopped`。
+- 已开启 SQLite WAL 崩溃安全写、单拍 tick 异常隔离；原生部署建议由 systemd `Restart=always` 托管，Docker 部署可使用 `restart: unless-stopped`。
 - **强烈建议**配合外部独立探活（如 healthchecks.io / Uptime Kuma）兜底「VPS 整体挂掉」的情况——届时连心跳都发不出，只有独立第三方能告警你。配置建议见 [`docs/external-healthcheck.md`](docs/external-healthcheck.md)。
 
 ## 路线图
 
 - **MVP / 目标流程 / 迭代 2（当前）**：配置、状态、加密打包、Telegram 确认、目标调度状态机、三阶段邮件、self_hosted 下载链接、state 密码加密、旧 state 迁移、关键文档与测试已完成。
 - **迭代 3 已推进**：S3-compatible 上传与预签名 URL、管理 CLI 已实现；真实对象存储联调待执行。
-- **待验证/收尾**：Docker 容器实际运行、真实目标流程联调、真实快速节奏手工演练、真实 S3/OSS 联调、正式发布与提交整理。
+- **待验证/收尾**：真实 systemd 部署验收、Docker 容器实际运行、真实目标流程联调、真实快速节奏手工演练、真实 S3/OSS 联调、正式发布与提交整理。

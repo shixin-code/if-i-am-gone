@@ -2,7 +2,7 @@
 
 更新时间：2026-06-02
 
-按本清单完成首次部署，避免漏掉 Telegram、SMTP、下载链接和恢复演练。
+按本清单完成首次部署，避免漏掉 Telegram、SMTP、下载链接、systemd 托管和恢复演练。
 
 ## 1. 准备 Telegram
 
@@ -49,15 +49,25 @@
 - 在 `.env` 设置 `MASTER_PASSPHRASE`。
 - 将 `MASTER_PASSPHRASE` 离线备份；丢失后无法解密已保存的归档密码。
 
-## 7. 启动与验证
+## 7. 原生 systemd 启动与验证
+
+推荐使用原生二进制 + systemd 部署。完整命令见 `docs/native-systemd-deploy.md`，首次部署时至少完成以下动作：
 
 ```bash
-cp config.example.yaml config.yaml
-cp .env.example .env
-mkdir -p data/source data/state
-docker compose up -d --build
-docker compose logs -f
+go test ./...
+go build -o ifgone ./cmd/ifgone
+go build -o ifgonectl ./cmd/ifgonectl
+sudo systemctl daemon-reload
+sudo systemctl enable --now ifgone
+sudo systemctl status ifgone
+journalctl -u ifgone -f
 ```
+
+注意：
+
+- `/opt/ifgone/config.yaml` 中的 `storage.source_dir`、`storage.state_dir` 应指向真实部署目录。
+- `/opt/ifgone/.env` 必须只保存在服务器本地，不要提交或复制到公开记录。
+- 如果使用 self_hosted 下载链接，systemd 服务启动后还要确认 HTTPS 反代可访问。
 
 如果只是做 Docker 本地 smoke，不想触碰真实 `.env` 和 `config.yaml`，可以运行：
 
@@ -72,6 +82,7 @@ docker compose logs -f
 验证项：
 
 - 服务日志无配置校验错误。
+- `systemctl status ifgone` 显示服务为 `active (running)`。
 - Telegram 确认消息可发送，按钮回调可确认。
 - SMTP 测试邮件可收到。
 - self_hosted 下载服务日志显示已启动。
@@ -81,7 +92,7 @@ docker compose logs -f
 
 - 备份 `config.yaml`、`.env`、`data/source/`、`data/state/`。
 - 在临时目录或测试服务器恢复上述文件。
-- 启动服务并确认 state 能打开。
+- 通过 systemd 启动服务并确认 state 能打开。
 - 确认 Telegram 与 SMTP 仍可用。
 
 恢复演练通过后，首次部署才算完成。

@@ -74,7 +74,7 @@
   - 备注：Docker build 与 VPS 部署仍需环境验证。
 
 - `[已完成]` README 使用说明与路线图。
-  - 范围：项目说明、快速开始、Docker 部署、配置说明、测试说明、局限与路线图。
+  - 范围：项目说明、快速开始、原生 systemd 推荐部署、Docker 可选部署、配置说明、测试说明、局限与路线图。
   - 证据：`README.md`。
 
 ## MVP 收尾与可靠性加固
@@ -105,7 +105,7 @@
   - 验证：`TestDrillAdvanceCheckinShiftsCheckinTime`、`go test ./internal/app ./internal/scheduler ./cmd/ifgonectl`、`go test ./...` 通过。
 
 - `[部分完成]` Docker build 与容器内运行验证。
-  - 当前情况：已新增 `.dockerignore`，避免 `.env`、`config.yaml`、`data/`、数据库、归档、日志和构建产物进入 Docker build 上下文；已新增 `scripts/docker-smoke.sh` 使用临时假配置/假数据做安全 smoke；`docker-compose config` 可解析 compose 文件。2026-06-02 再次执行 `./scripts/docker-smoke.sh`，仍卡在 Docker daemon 拉取 Docker Hub 基础镜像超时，尚未完成容器实际启动验证。
+  - 当前情况：Docker 已调整为可选部署/测试路径；已新增 `.dockerignore`，避免 `.env`、`config.yaml`、`data/`、数据库、归档、日志和构建产物进入 Docker build 上下文；已新增 `scripts/docker-smoke.sh` 使用临时假配置/假数据做安全 smoke；`docker-compose config` 可解析 compose 文件。2026-06-02 再次执行 `./scripts/docker-smoke.sh`，仍卡在 Docker daemon 拉取 Docker Hub 基础镜像超时，尚未完成容器实际启动验证。
   - 目标：执行 `docker compose up -d --build`，确认容器能启动、挂载路径可读写、日志输出正常。
   - 验证：`bash -n scripts/docker-smoke.sh` 通过；`docker-compose config` 可解析；`./scripts/docker-smoke.sh` 失败于 `registry-1.docker.io/v2/` 超时。
   - 安全备注：`docker-compose config` 会展开本地 `.env`，不要把完整输出提交或粘贴到公开记录。
@@ -318,7 +318,7 @@
   - 备注：不得在任务文档中记录真实 access key、secret key、bucket 私密路径或完整预签名链接。
 
 - `[已完成]` 外部探活集成说明。
-  - 当前情况：已补充 healthchecks.io、Uptime Kuma、VPS/下载端点/证书/Docker 状态监控建议，以及告警处理 checklist；已实现程序内主动 ping webhook，成功/失败均写审计，失败不影响核心投递。
+  - 当前情况：已补充 healthchecks.io、Uptime Kuma、VPS/下载端点/证书/systemd/Docker 状态监控建议，以及告警处理 checklist；已实现程序内主动 ping webhook，成功/失败均写审计，失败不影响核心投递。
   - 目标：补充 healthchecks.io / Uptime Kuma 的部署建议，或提供主动 ping webhook。
   - 证据：`docs/external-healthcheck.md`、`README.md`。
   - 验证：`internal/reliability/healthcheck_test.go`、`TestValidateRejectsInvalidHealthcheckConfig`、`go test ./...` 通过。
@@ -385,6 +385,12 @@
 
 - `[已完成]` 基础 README。
   - 证据：`README.md`。
+
+- `[已完成]` 原生 systemd 部署文档。
+  - 当前情况：已新增原生二进制 + systemd 部署说明，并同步 README、首次部署 checklist、灾难恢复、外部探活和 changelog；Docker 保留为可选部署/测试路径。
+  - 目标：说明 Go 二进制构建、`/opt/ifgone` 推荐目录、运行用户、systemd service、启动验证、升级和排查命令。
+  - 证据：`docs/native-systemd-deploy.md`、`README.md`、`docs/deploy-checklist.md`、`docs/disaster-recovery.md`、`docs/external-healthcheck.md`、`docs/changelog.md`。
+  - 备注：真实 VPS systemd 部署仍需后续人工验收。
 
 - `[已完成]` 首次部署 checklist。
   - 目标：逐项说明准备 Bot、获取 chat_id、SMTP 授权码、创建数据目录、试运行、恢复演练。

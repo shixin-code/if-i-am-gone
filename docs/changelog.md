@@ -58,6 +58,7 @@ MVP 已具备以下能力：
 - 配置校验增强：SMTP、受益人、下载、S3、运行时路径等。
 - Docker build 上下文安全：新增 `.dockerignore`，避免真实配置和数据进入镜像构建上下文。
 - Docker smoke 脚本：使用临时假配置和假数据验证容器部署路径。
+- 原生 systemd 部署文档：将 VPS 部署推荐路径调整为 Go 二进制 + systemd 托管，Docker 保留为可选部署/测试路径。
 - 管理 CLI：查看状态、dry-run、清理过期 token、触发测试邮件、手动打包并可写入 state。
 - 程序内主动外部探活 ping：可定时访问 healthchecks.io 等第三方 ping URL，成功/失败均写审计，失败不影响核心投递。
 
@@ -85,6 +86,7 @@ MVP 已具备以下能力：
 
 以下能力已有代码或脚本，但仍需要真实环境验证：
 
+- 原生 systemd 部署验收：需要在真实 VPS 上确认二进制、`/opt/ifgone` 目录、systemd service、日志、Telegram/SMTP 和下载链路均正常。
 - Docker build 与容器内运行：2026-06-02 再次执行 `./scripts/docker-smoke.sh`，当前环境仍拉取 Docker Hub 基础镜像超时，容器实际启动尚未完成验证。
 - 真实目标流程联调：需要真实 Telegram、SMTP、self_hosted 或 S3 下载端点和人工收件确认。
 - 真实 S3-compatible 对象存储联调：需要验证上传权限、预签名链接公网可访问性、过期时间和受益人下载体验。
@@ -96,9 +98,10 @@ MVP 已具备以下能力：
 
 后续建议按以下顺序推进：
 
-1. 完成真实目标流程联调和 Docker 容器验证。
+1. 完成真实 systemd 部署验收和真实目标流程联调。
 2. 完成真实 S3-compatible 对象存储联调。
-3. 完成正式 release tag 与提交整理。
+3. 在可拉取基础镜像的环境中补做 Docker 容器验证。
+4. 完成正式 release tag 与提交整理。
 
 ## 发布前 checklist
 
@@ -106,6 +109,7 @@ MVP 已具备以下能力：
 
 - `go test ./...` 通过。
 - `git diff --check` 通过。
+- 按 `docs/native-systemd-deploy.md` 在真实 VPS 完成一次原生部署验收。
 - `scripts/docker-smoke.sh` 在可拉取基础镜像的环境中通过。
 - `docker-compose config` 会展开 `.env`，检查时不要把完整输出提交或粘贴到公开记录。
 - 按 `docs/quick-flow-drill.md` 完成一次测试环境快速节奏演练。

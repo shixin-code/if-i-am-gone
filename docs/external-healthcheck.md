@@ -7,7 +7,7 @@
 优先使用独立于部署 VPS 的第三方或另一台机器监控：
 
 - `healthchecks.io`：适合简单心跳。服务定时访问一个专属 ping URL，超时未收到就告警。
-- `Uptime Kuma`：适合自建监控。可以监控 HTTP 端点、TCP 端口、Docker 容器状态，也能转发到 Telegram、邮件或其他通知渠道。
+- `Uptime Kuma`：适合自建监控。可以监控 HTTP 端点、TCP 端口、systemd 服务或 Docker 容器状态，也能转发到 Telegram、邮件或其他通知渠道。
 - 云厂商监控：适合已经使用云服务器的场景，可监控实例状态、端口可达性、磁盘和 CPU。
 
 推荐顺序：
@@ -24,6 +24,7 @@
 - 下载服务是否可访问：监控 `https://你的域名/download/__health_placeholder__` 可返回 `404` 或 `403`，只要说明服务能响应即可。
 - HTTPS 证书是否过期：Uptime Kuma 可直接监控证书有效期。
 - 磁盘空间是否不足：`data/state` 和归档目录无法写入会影响状态与打包。
+- systemd 服务是否运行：如果使用原生部署，应监控 `ifgone.service` 是否处于 active 状态。
 - Docker 容器是否运行：如果使用 docker compose 部署，应监控容器 restart 次数和当前状态。
 
 ## 程序内主动 ping
@@ -63,6 +64,12 @@ HEALTHCHECK_PING_URL=https://hc-ping.com/你的-uuid
 */10 * * * * pgrep -f "ifgone" >/dev/null && curl -fsS --max-time 10 https://hc-ping.com/你的-uuid >/dev/null
 ```
 
+如果使用原生 systemd：
+
+```bash
+*/10 * * * * systemctl is-active --quiet ifgone && curl -fsS --max-time 10 https://hc-ping.com/你的-uuid >/dev/null
+```
+
 如果使用 Docker：
 
 ```bash
@@ -80,6 +87,7 @@ HEALTHCHECK_PING_URL=https://hc-ping.com/你的-uuid
 | VPS SSH | TCP | `服务器IP:22` | 可连接 |
 | 下载服务 HTTPS | HTTP(s) | `https://你的域名/download/not-a-real-token` | 返回 404 或 403 也算服务活着 |
 | 证书有效期 | HTTP(s) | `https://你的域名/` | 证书未过期 |
+| systemd 状态 | Push/脚本 | `systemctl is-active --quiet ifgone` | active |
 | Docker 状态 | Docker Container | `ifgone` 容器 | running |
 
 告警渠道建议不要只用 Telegram。如果 Telegram Bot 或网络到 Telegram 出问题，监控告警也可能收不到。建议至少配置一个备用渠道，例如邮件、短信、企业微信、ntfy 或另一套 IM。
@@ -89,8 +97,8 @@ HEALTHCHECK_PING_URL=https://hc-ping.com/你的-uuid
 收到外部探活告警后，按以下顺序检查：
 
 1. 登录 VPS，确认机器是否在线、磁盘是否满。
-2. 查看服务状态：`docker compose ps` 或 `systemctl status ifgone`。
-3. 查看日志：`data/state/app.log` 或容器日志。
+2. 查看服务状态：原生部署用 `systemctl status ifgone`；Docker 部署用 `docker compose ps`。
+3. 查看日志：原生部署用 `journalctl -u ifgone -f` 或 `data/state/app.log`；Docker 部署用容器日志。
 4. 确认 `.env`、`config.yaml`、`data/state/state.db` 是否仍存在且权限正确。
 5. 如果下载服务不可达，检查反代、域名解析、防火墙和 TLS 证书。
 6. 如果 Telegram/SMTP 失败，先用最小测试消息验证凭据和网络。
