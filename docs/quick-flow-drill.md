@@ -68,17 +68,17 @@ go build ./cmd/ifgone ./cmd/ifgonectl
 
 | 阶段 | 触发方式 | 预期结果 | 验收证据 |
 |---|---|---|---|
-| D0 安全确认 | 启动后到达本月确认日 | Telegram 收到“本月安全确认”和“确认正常”按钮 | Telegram 消息、`pending_token: <set>` |
-| 连续提醒 | 不点击确认，每过 `reminder_interval` 一次 | Telegram 收到第 N 次提醒，第 `reminder_count` 次进入最后提醒文案 | Telegram 消息、`miss_count` 增加 |
-| 受益人预提醒 | 连续提醒期结束后下一次 tick | 用户收到阶段 Telegram；受益人收到预提醒邮件 | 邮件主题 `[重要] 一封预定的信息`，state 进入 `WARNED` |
-| 密码阶段 | 预提醒成功后等待 `password_delay_after_warn` | 系统现场打包；用户收到阶段 Telegram；受益人收到解压密码邮件 | `data/state/archives/archive-*.zip`、密码邮件、state 进入 `PASSWORD_SENT` |
-| 下载链接阶段 | 密码邮件成功后等待 `file_delay_after_password` | 用户收到阶段 Telegram；受益人收到下载链接邮件 | 下载链接邮件、`download_tokens` 记录、state 进入 `FILE_SENT` |
+| D0 安全确认 | 启动后到达本月确认日 | Telegram 收到“🟢 定时安全确认”和“✅ 一切正常”按钮 | Telegram 消息、`pending_token: <set>` |
+| 连续提醒 | 不点击确认，每过 `reminder_interval` 一次 | Telegram 收到“🟡 安全确认提醒”和“✅ 一切正常”按钮，第 `reminder_count` 次收到“🔴 最后安全确认提醒” | Telegram 消息、`miss_count` 增加 |
+| 受益人预提醒 | 连续提醒期结束后下一次 tick | 用户收到“⚠️ 阶段提醒 · 预提醒邮件”和“✅ 一切正常”按钮；受益人收到预提醒邮件 | 邮件主题 `[重要] 一封预定的信息`，state 进入 `WARNED` |
+| 密码阶段 | 预提醒成功后等待 `password_delay_after_warn` | 系统现场打包；用户收到“🔐 阶段提醒 · 解压密码”；受益人收到解压密码邮件 | `data/state/archives/archive-*.zip`、密码邮件、state 进入 `PASSWORD_SENT` |
+| 下载链接阶段 | 密码邮件成功后等待 `file_delay_after_password` | 用户收到“🔗 阶段提醒 · 下载链接”；受益人收到下载链接邮件 | 下载链接邮件、`download_tokens` 记录、state 进入 `FILE_SENT` |
 | 完成 | 文件阶段成功后下一次 tick | 流程进入 `COMPLETED` | `ifgonectl status` 显示 `phase: COMPLETED` |
 
 
 ## 取消路径演练
 
-在以下任一阶段点击 Telegram 最新“确认正常”按钮：
+在以下任一阶段点击 Telegram 最新“一切正常”按钮：
 
 - 连续提醒阶段。
 - 预提醒邮件已发送但密码阶段未到达。

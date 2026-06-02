@@ -73,7 +73,7 @@ logging:
 templates:
   zh:
     checkin_telegram: "确认"
-    checkin_button_text: "确认正常"
+    checkin_button_text: "✅ 一切正常"
     checkin_accepted_reply: "已确认"
     checkin_expired_reply: "已过期"
     checkin_error_reply: "出错"

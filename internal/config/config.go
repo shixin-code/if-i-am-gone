@@ -406,7 +406,6 @@ func (c *Config) Validate() error {
 			"password_stage_telegram": t.PasswordStageTelegram,
 			"file_stage_telegram":     t.FileStageTelegram,
 			"cancel_flow_telegram":    t.CancelFlowTelegram,
-			"heartbeat_telegram":      t.HeartbeatTelegram,
 			"warn_email_subject":      t.WarnEmailSubject,
 			"warn_email_body":         t.WarnEmailBody,
 			"password_email_subject":  t.PasswordEmailSubject,
@@ -418,6 +417,9 @@ func (c *Config) Validate() error {
 			if strings.TrimSpace(value) == "" {
 				errs = append(errs, fmt.Sprintf("templates.zh.%s 不能为空", name))
 			}
+		}
+		if c.Reliability.HeartbeatEnabled && strings.TrimSpace(t.HeartbeatTelegram) == "" {
+			errs = append(errs, "templates.zh.heartbeat_telegram 在 heartbeat_enabled=true 时不能为空")
 		}
 	}
 	if len(errs) > 0 {

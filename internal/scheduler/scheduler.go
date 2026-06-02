@@ -18,12 +18,12 @@ import (
 
 // Notifier 抽象对外通知（Telegram + Email），便于测试注入假实现。
 type Notifier interface {
-	// SendCheckin 发送带确认按钮的 Telegram 消息（携带一次性 token）。
-	SendCheckin(token string) error
+	// SendCheckin 发送带确认按钮的 Telegram 消息（携带一次性 token 和发送时间）。
+	SendCheckin(token string, now time.Time) error
 	// SendReminder 发送连续提醒阶段的第 n 次 Telegram 提醒。
-	SendReminder(n int, isLast bool) error
+	SendReminder(n int, isLast bool, token string) error
 	// SendStageReminder 在每个受益人邮件阶段前提醒用户本人。
-	SendStageReminder(stage state.Stage) error
+	SendStageReminder(stage state.Stage, token string) error
 	// SendHeartbeat 发送服务巡检心跳（Telegram）。
 	SendHeartbeat() error
 	// SendMessageSafe 发送一条任意文本 Telegram 消息（如取消通知）。
@@ -139,7 +139,7 @@ func (s *Scheduler) tickAlive(st *state.State, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		if err := s.notifier.SendCheckin(token); err != nil {
+		if err := s.notifier.SendCheckin(token, now); err != nil {
 			s.logf("发送确认消息失败: %v", err)
 			_ = s.store.Audit("checkin_send_failed", err.Error(), now)
 			// 发送失败则不更新时间戳，下拍重试。
@@ -170,7 +170,7 @@ func (s *Scheduler) tickOutstandingCheckin(st *state.State, now time.Time) error
 	if n <= s.cfg.TargetFlow.ReminderCount {
 		if st.MissCount < n {
 			isLast := n == s.cfg.TargetFlow.ReminderCount
-			if err := s.notifier.SendReminder(n, isLast); err != nil {
+			if err := s.notifier.SendReminder(n, isLast, st.PendingToken); err != nil {
 				s.logf("发送连续提醒失败: %v", err)
 				_ = s.store.Audit("reminder_failed", err.Error(), now)
 			} else {
@@ -328,7 +328,15 @@ func (s *Scheduler) deliver(email string, stage state.Stage, now time.Time, fn f
 
 func (s *Scheduler) deliverOwnerStageReminder(recordStage, flowStage state.Stage, now time.Time) bool {
 	return s.deliver("__owner_telegram__", recordStage, now, func() error {
-		return s.notifier.SendStageReminder(flowStage)
+		token := ""
+		if flowStage == state.StageWarn {
+			st, err := s.store.Load()
+			if err != nil {
+				return err
+			}
+			token = st.PendingToken
+		}
+		return s.notifier.SendStageReminder(flowStage, token)
 	})
 }
 

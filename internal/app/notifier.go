@@ -42,57 +42,67 @@ func newNotifierForTest(cfg *config.Config, bot telegramClient, mail mailClient,
 	return &Notifier{cfg: cfg, bot: bot, mail: mail, dl: dl, logf: func(string, ...any) {}}
 }
 
-func (n *Notifier) SendCheckin(token string) error {
+func (n *Notifier) SendCheckin(token string, now time.Time) error {
 	t := n.cfg.Lang("zh")
 	text := t.CheckinTelegram
 	if text == "" {
-		text = "本月安全确认：如果你一切正常，请点击下方按钮完成确认。"
+		text = "🟢 定时安全确认\n<当前日期>\n\n点击下方按钮确认一切正常。"
 	}
 	buttonText := t.CheckinButtonText
 	if buttonText == "" {
-		buttonText = "确认正常"
+		buttonText = "✅ 一切正常"
 	}
+	text = templates.Render(text, map[string]string{
+		"当前日期": n.formatDate(now),
+	})
 	return n.bot.SendCheckin(text, buttonText, token)
 }
 
-func (n *Notifier) SendReminder(count int, isLast bool) error {
+func (n *Notifier) SendReminder(count int, isLast bool, token string) error {
 	t := n.cfg.Lang("zh")
 	text := t.DailyReminderTelegram
 	if isLast && t.FinalReminderTelegram != "" {
 		text = t.FinalReminderTelegram
 	}
 	if text == "" && isLast {
-		text = "安全确认提醒：这是本轮连续提醒的最后一次。\n如果你一切正常，请尽快点击最新确认消息中的“确认正常”按钮。若仍未确认，系统将进入预设通知流程。"
+		text = "🔴 最后安全确认提醒\n这是本轮连续提醒的最后一次。\n\n如果你一切正常，请尽快点击最新确认消息中的“一切正常”按钮。若仍未确认，系统将进入预设通知流程。"
 	}
 	if text == "" {
-		text = "安全确认提醒：系统已第 <N> 次未收到你的确认。\n如果你一切正常，请点击最新确认消息中的“确认正常”按钮。"
+		text = "🟡 安全确认提醒\n系统已第 <N> 次未收到你的确认。\n\n如果你一切正常，请点击最新确认消息中的“一切正常”按钮。"
 	}
-	return n.bot.SendMessage(templates.Render(text, map[string]string{
+	text = templates.Render(text, map[string]string{
 		"N": fmt.Sprintf("%d", count),
-	}))
+	})
+	if token != "" {
+		return n.bot.SendCheckin(text, n.checkinButtonText(), token)
+	}
+	return n.bot.SendMessage(text)
 }
 
-func (n *Notifier) SendStageReminder(stage state.Stage) error {
+func (n *Notifier) SendStageReminder(stage state.Stage, token string) error {
 	t := n.cfg.Lang("zh")
 	text := ""
 	switch stage {
 	case state.StageWarn:
 		text = t.WarnStageTelegram
 		if text == "" {
-			text = "阶段提醒：系统即将向受益人发送预提醒邮件。\n如果你一切正常，请立即点击最新安全确认消息中的“确认正常”按钮，系统会暂停后续流程。"
+			text = "⚠️ 阶段提醒 · 预提醒邮件\n系统即将向受益人发送预提醒邮件。\n\n如果你一切正常，请立即点击最新安全确认消息中的“一切正常”按钮，系统会暂停后续流程。"
 		}
 	case state.StagePassword:
 		text = t.PasswordStageTelegram
 		if text == "" {
-			text = "阶段提醒：系统即将打包文件，并向受益人发送解压密码。\n如果你一切正常，请立即点击最新安全确认消息中的“确认正常”按钮，系统会暂停后续流程。"
+			text = "🔐 阶段提醒 · 解压密码\n系统即将打包文件，并向受益人发送解压密码。\n\n如果你一切正常，请立即点击最新安全确认消息中的“一切正常”按钮，系统会暂停后续流程。"
 		}
 	case state.StageFile:
 		text = t.FileStageTelegram
 		if text == "" {
-			text = "阶段提醒：系统即将向受益人发送加密文件下载链接。\n如果你一切正常，请立即点击最新安全确认消息中的“确认正常”按钮，系统会暂停后续流程。"
+			text = "🔗 阶段提醒 · 下载链接\n系统即将向受益人发送加密文件下载链接。\n\n如果你一切正常，请立即点击最新安全确认消息中的“一切正常”按钮，系统会暂停后续流程。"
 		}
 	default:
-		text = "阶段提醒：系统即将进入下一步预设通知流程。如果你一切正常，请点击最新确认消息暂停后续流程。"
+		text = "⚠️ 阶段提醒\n系统即将进入下一步预设通知流程。\n\n如果你一切正常，请点击最新确认消息暂停后续流程。"
+	}
+	if token != "" {
+		return n.bot.SendCheckin(text, n.checkinButtonText(), token)
 	}
 	return n.bot.SendMessage(text)
 }
@@ -101,7 +111,7 @@ func (n *Notifier) SendHeartbeat() error {
 	t := n.cfg.Lang("zh")
 	text := t.HeartbeatTelegram
 	if text == "" {
-		text = "系统巡检正常：服务正在按计划运行。若长期收不到此消息，请检查服务器是否在线。"
+		return nil
 	}
 	return n.bot.SendMessage(text)
 }
@@ -112,6 +122,14 @@ func (n *Notifier) SendMessageSafe(text string) error {
 		text = t.CancelFlowTelegram
 	}
 	return n.bot.SendMessage(text)
+}
+
+func (n *Notifier) checkinButtonText() string {
+	buttonText := n.cfg.Lang("zh").CheckinButtonText
+	if buttonText == "" {
+		buttonText = "✅ 一切正常"
+	}
+	return buttonText
 }
 
 func (n *Notifier) DeliverWarn(b config.Beneficiary, passwordSendDate, fileLinkSendDate time.Time) error {
@@ -196,6 +214,14 @@ func (n *Notifier) formatDateTime(t time.Time) string {
 		loc = time.Local
 	}
 	return t.In(loc).Format("2006-01-02 15:04 MST")
+}
+
+func (n *Notifier) formatDate(t time.Time) string {
+	loc, err := time.LoadLocation(n.cfg.TargetFlow.Timezone)
+	if err != nil {
+		loc = time.Local
+	}
+	return t.In(loc).Format("2006-01-02")
 }
 
 // PackerAdapter 实现 scheduler.Packer。

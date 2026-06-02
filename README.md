@@ -130,7 +130,7 @@ go build ./cmd/ifgonectl
 
 本系统依赖 VPS 持续在线 —— 而它要应对的恰是「主人不在了」。缓解手段：
 
-- **系统心跳**：每 7 天给你发「系统正常运行中」。长期收不到 = VPS 可能挂了，请检查。
+- **系统心跳**：默认关闭，避免 Telegram 文本消息过多；如需额外巡检提醒，可开启 `reliability.heartbeat_enabled`。
 - **外部探活 ping**：可配置 `reliability.healthcheck`，让程序定时访问 healthchecks.io 等第三方 ping URL；失败只记录日志和审计，不影响核心投递。
 - 已开启 SQLite WAL 崩溃安全写、单拍 tick 异常隔离；原生部署建议由 systemd `Restart=always` 托管，Docker 部署可使用 `restart: unless-stopped`。
 - **强烈建议**配合外部独立探活（如 healthchecks.io / Uptime Kuma）兜底「VPS 整体挂掉」的情况——届时连心跳都发不出，只有独立第三方能告警你。配置建议见 [`docs/external-healthcheck.md`](docs/external-healthcheck.md)。

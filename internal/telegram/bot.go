@@ -46,7 +46,7 @@ const callbackConfirmPrefix = "confirm:"
 // SendCheckin 发送一条带确认按钮的消息，按钮回调携带 token。
 func (b *Bot) SendCheckin(text, buttonText, token string) error {
 	if buttonText == "" {
-		buttonText = "确认正常"
+		buttonText = "✅ 一切正常"
 	}
 	keyboard := map[string]any{
 		"inline_keyboard": [][]map[string]string{{

@@ -16,6 +16,7 @@ type fakeBot struct {
 	checkinText  string
 	buttonText   string
 	checkinToken string
+	checkins     int
 	messages     []string
 }
 
@@ -23,6 +24,7 @@ func (f *fakeBot) SendCheckin(text, buttonText, token string) error {
 	f.checkinText = text
 	f.buttonText = buttonText
 	f.checkinToken = token
+	f.checkins++
 	return nil
 }
 
@@ -75,8 +77,8 @@ func testNotifierConfig() *config.Config {
 		},
 		Templates: map[string]config.Templates{
 			"zh": {
-				CheckinTelegram:       "确认文本",
-				CheckinButtonText:     "按钮文本",
+				CheckinTelegram:       "<当前日期> 确认文本",
+				CheckinButtonText:     "✅ 一切正常",
 				CheckinAcceptedReply:  "确认成功",
 				CheckinExpiredReply:   "确认过期",
 				CheckinErrorReply:     "确认出错",
@@ -106,25 +108,41 @@ func TestNotifierTelegramTemplates(t *testing.T) {
 	mail := &fakeMail{}
 	n := newNotifierForTest(cfg, bot, mail, nil)
 
-	if err := n.SendCheckin("tok"); err != nil {
+	now := time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC)
+	if err := n.SendCheckin("tok", now); err != nil {
 		t.Fatal(err)
 	}
-	if bot.checkinText != "确认文本" || bot.buttonText != "按钮文本" || bot.checkinToken != "tok" {
+	if bot.checkinText != "2026-01-02 确认文本" || bot.buttonText != "✅ 一切正常" || bot.checkinToken != "tok" {
 		t.Fatalf("checkin 不对: text=%q button=%q token=%q", bot.checkinText, bot.buttonText, bot.checkinToken)
 	}
-	if err := n.SendReminder(3, false); err != nil {
+	if err := n.SendReminder(3, false, "tok-reminder"); err != nil {
 		t.Fatal(err)
 	}
-	if err := n.SendReminder(7, true); err != nil {
+	if bot.checkinText != "第3天提醒" || bot.buttonText != "✅ 一切正常" || bot.checkinToken != "tok-reminder" {
+		t.Fatalf("reminder 按钮不对: text=%q button=%q token=%q", bot.checkinText, bot.buttonText, bot.checkinToken)
+	}
+	if bot.checkins != 2 {
+		t.Fatalf("D0 与连续提醒都应发送带按钮消息，实际 %d", bot.checkins)
+	}
+	if err := n.SendReminder(7, true, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := n.SendStageReminder(state.StagePassword); err != nil {
+	if err := n.SendStageReminder(state.StageWarn, "tok-warn"); err != nil {
+		t.Fatal(err)
+	}
+	if bot.checkinText != "预提醒阶段" || bot.buttonText != "✅ 一切正常" || bot.checkinToken != "tok-warn" {
+		t.Fatalf("warn stage 按钮不对: text=%q button=%q token=%q", bot.checkinText, bot.buttonText, bot.checkinToken)
+	}
+	if bot.checkins != 3 {
+		t.Fatalf("预提醒阶段也应发送带按钮消息，实际 %d", bot.checkins)
+	}
+	if err := n.SendStageReminder(state.StagePassword, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := n.SendHeartbeat(); err != nil {
 		t.Fatal(err)
 	}
-	if bot.messages[0] != "第3天提醒" || bot.messages[1] != "最后第7天提醒" || bot.messages[2] != "密码阶段" || bot.messages[3] != "心跳文本" {
+	if bot.messages[0] != "最后第7天提醒" || bot.messages[1] != "密码阶段" || bot.messages[2] != "心跳文本" {
 		t.Fatalf("消息不对: %+v", bot.messages)
 	}
 }

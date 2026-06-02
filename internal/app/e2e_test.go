@@ -78,8 +78,8 @@ func TestTargetFlowEndToEndSimulation(t *testing.T) {
 	if err := s.Tick(base.Add(24 * time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if len(bot.messages) == 0 || !strings.Contains(bot.messages[0], "最后第1天提醒") {
-		t.Fatalf("应发送最后连续提醒，messages=%+v", bot.messages)
+	if !strings.Contains(bot.checkinText, "最后第1天提醒") || bot.checkinToken != "confirm-token" {
+		t.Fatalf("应发送带按钮的最后连续提醒，text=%q token=%q", bot.checkinText, bot.checkinToken)
 	}
 
 	if err := s.Tick(base.Add(48*time.Hour + time.Minute)); err != nil {
@@ -96,6 +96,9 @@ func TestTargetFlowEndToEndSimulation(t *testing.T) {
 	st, _ = store.Load()
 	if st.Phase != state.PhaseWarned || len(mail.messages) != 1 {
 		t.Fatalf("预提醒后状态/邮件不对: phase=%s mails=%d", st.Phase, len(mail.messages))
+	}
+	if bot.checkinText != "预提醒阶段" || bot.checkinToken != "confirm-token" {
+		t.Fatalf("预提醒阶段应发送带按钮提醒，text=%q token=%q", bot.checkinText, bot.checkinToken)
 	}
 	if mail.messages[0].Subject != "预提醒 张三" {
 		t.Fatalf("预提醒主题=%q", mail.messages[0].Subject)

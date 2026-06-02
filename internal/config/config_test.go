@@ -47,7 +47,7 @@ download:
 templates:
   zh:
     checkin_telegram: "确认"
-    checkin_button_text: "确认正常"
+    checkin_button_text: "✅ 一切正常"
     checkin_accepted_reply: "已确认"
     checkin_expired_reply: "已过期"
     checkin_error_reply: "确认出错"
@@ -98,6 +98,22 @@ func TestLoadExpandsEnvAndAppliesDefaults(t *testing.T) {
 	}
 	if cfg.Reliability.Healthcheck.Interval.Std() != 10*time.Minute || cfg.Reliability.Healthcheck.Timeout.Std() != 10*time.Second {
 		t.Fatalf("探活默认值不对: interval=%s timeout=%s", cfg.Reliability.Healthcheck.Interval.Std(), cfg.Reliability.Healthcheck.Timeout.Std())
+	}
+}
+
+func TestHeartbeatTemplateRequiredOnlyWhenHeartbeatEnabled(t *testing.T) {
+	t.Setenv("TEST_TELEGRAM_TOKEN", "bot-token")
+	t.Setenv("TEST_SMTP_PASSWORD", "smtp-pass")
+
+	raw := strings.Replace(minimalConfig(), `    heartbeat_telegram: "心跳"`+"\n", "", 1)
+	if _, err := Load(writeConfig(t, raw)); err != nil {
+		t.Fatalf("heartbeat 关闭时不应要求 heartbeat_telegram: %v", err)
+	}
+
+	raw = strings.Replace(raw, "download:\n", "reliability:\n  heartbeat_enabled: true\n\ndownload:\n", 1)
+	_, err := Load(writeConfig(t, raw))
+	if err == nil || !strings.Contains(err.Error(), "templates.zh.heartbeat_telegram") {
+		t.Fatalf("heartbeat 开启时应要求 heartbeat_telegram，实际: %v", err)
 	}
 }
 

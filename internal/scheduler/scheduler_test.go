@@ -17,8 +17,10 @@ import (
 type fakeNotifier struct {
 	checkins             int
 	dailyReminders       []int
+	reminderTokens       []string
 	lastReminderWasFinal bool
 	stageReminders       map[state.Stage]int
+	stageReminderTokens  map[state.Stage]string
 	heartbeats           int
 	messages             int
 	warnSent             map[string]int
@@ -32,24 +34,27 @@ type fakeNotifier struct {
 
 func newFakeNotifier() *fakeNotifier {
 	return &fakeNotifier{
-		warnSent:       map[string]int{},
-		passwordSent:   map[string]int{},
-		fileSent:       map[string]int{},
-		stageReminders: map[state.Stage]int{},
-		failWarn:       map[string]bool{},
-		failPassword:   map[string]bool{},
-		failFile:       map[string]bool{},
+		warnSent:            map[string]int{},
+		passwordSent:        map[string]int{},
+		fileSent:            map[string]int{},
+		stageReminders:      map[state.Stage]int{},
+		stageReminderTokens: map[state.Stage]string{},
+		failWarn:            map[string]bool{},
+		failPassword:        map[string]bool{},
+		failFile:            map[string]bool{},
 	}
 }
 
-func (f *fakeNotifier) SendCheckin(token string) error { f.checkins++; return nil }
-func (f *fakeNotifier) SendReminder(n int, isLast bool) error {
+func (f *fakeNotifier) SendCheckin(token string, now time.Time) error { f.checkins++; return nil }
+func (f *fakeNotifier) SendReminder(n int, isLast bool, token string) error {
 	f.dailyReminders = append(f.dailyReminders, n)
+	f.reminderTokens = append(f.reminderTokens, token)
 	f.lastReminderWasFinal = isLast
 	return nil
 }
-func (f *fakeNotifier) SendStageReminder(stage state.Stage) error {
+func (f *fakeNotifier) SendStageReminder(stage state.Stage, token string) error {
 	f.stageReminders[stage]++
+	f.stageReminderTokens[stage] = token
 	return nil
 }
 func (f *fakeNotifier) SendHeartbeat() error              { f.heartbeats++; return nil }
@@ -210,15 +215,23 @@ func TestMonthlyReminderProgression(t *testing.T) {
 	if n.checkins != 1 {
 		t.Fatalf("确认日应发送本月确认，实际 %d", n.checkins)
 	}
+	st, _ := store.Load()
+	pendingToken := st.PendingToken
+	if pendingToken == "" {
+		t.Fatal("D0 应生成 pending token")
+	}
 
 	// D1 → GRACE + 第 1 天提醒
 	_ = s.Tick(base.Add(24 * time.Hour))
-	st, _ := store.Load()
+	st, _ = store.Load()
 	if st.Phase != state.PhaseGrace {
 		t.Fatalf("D1 应为 GRACE，实际 %s", st.Phase)
 	}
 	if len(n.dailyReminders) != 1 || n.dailyReminders[0] != 1 {
 		t.Fatalf("D1 应发送第 1 天提醒，实际 %+v", n.dailyReminders)
+	}
+	if len(n.reminderTokens) != 1 || n.reminderTokens[0] != pendingToken {
+		t.Fatalf("D1 提醒应携带确认 token，实际 %+v want %q", n.reminderTokens, pendingToken)
 	}
 
 	// D7 → 最后一天提醒
@@ -307,6 +320,11 @@ func TestDowntimeReplay(t *testing.T) {
 	tNow := base
 	// D0：发送本月确认。
 	_ = s.Tick(tNow)
+	st, _ := store.Load()
+	pendingToken := st.PendingToken
+	if pendingToken == "" {
+		t.Fatal("D0 应生成 pending token")
+	}
 	// D8：连续提醒期已过，进入 PENDING_TRIGGER。
 	tNow = tNow.Add(8*24*time.Hour + time.Minute)
 	_ = s.Tick(tNow)
@@ -322,6 +340,9 @@ func TestDowntimeReplay(t *testing.T) {
 	}
 	if n.stageReminders[state.StageWarn] != 1 {
 		t.Fatalf("应发送预提醒阶段 Telegram 提醒，实际 %d", n.stageReminders[state.StageWarn])
+	}
+	if n.stageReminderTokens[state.StageWarn] != pendingToken {
+		t.Fatalf("预提醒阶段 Telegram 应携带确认 token，实际 %q want %q", n.stageReminderTokens[state.StageWarn], pendingToken)
 	}
 
 	// 越过 password_delay_after_warn(72h)：WARNED → PASSWORD_SENT，并在此刻才打包。
