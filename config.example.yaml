@@ -8,7 +8,8 @@ state_dir: /data/state               # state.db、加密包、日志的存放目
 # 目标流程配置：当前调度主流程读取这些字段。
 target_flow:
   checkin_day_of_month: 1            # 每月几号发送安全确认
-  daily_reminder_days: 7             # 未确认后连续提醒几天
+  reminder_count: 7                  # 未确认后连续提醒几次
+  reminder_interval: 24h             # 两次提醒间隔（Go duration: 1m/2h/24h；测试可设 1m 快速演练）
   password_delay_after_warn: 72h     # 预提醒邮件成功后多久发送密码
   file_delay_after_password: 168h    # 密码邮件成功后多久发送下载链接
   timezone: Asia/Shanghai            # 月度确认日和预计发送日期展示时区

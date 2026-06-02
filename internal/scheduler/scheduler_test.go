@@ -43,8 +43,8 @@ func newFakeNotifier() *fakeNotifier {
 }
 
 func (f *fakeNotifier) SendCheckin(token string) error { f.checkins++; return nil }
-func (f *fakeNotifier) SendDailyReminder(day int, isLast bool) error {
-	f.dailyReminders = append(f.dailyReminders, day)
+func (f *fakeNotifier) SendReminder(n int, isLast bool) error {
+	f.dailyReminders = append(f.dailyReminders, n)
 	f.lastReminderWasFinal = isLast
 	return nil
 }
@@ -88,6 +88,11 @@ func (p *fakePacker) Pack(now time.Time) (string, string, string, error) {
 // --- 测试脚手架 ---
 
 func newTestScheduler(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier, *fakePacker) {
+	s, store, n, p, _ := newTestSchedulerCfg(t)
+	return s, store, n, p
+}
+
+func newTestSchedulerCfg(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier, *fakePacker, *config.Config) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "state.db")
 	store, err := state.Open(dbPath)
@@ -100,7 +105,8 @@ func newTestScheduler(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier, *f
 		SourceDir: "/tmp",
 		TargetFlow: config.TargetFlow{
 			CheckinDayOfMonth:      1,
-			DailyReminderDays:      7,
+			ReminderCount:          7,
+			ReminderInterval:       config.Duration(24 * time.Hour),
 			PasswordDelayAfterWarn: config.Duration(72 * time.Hour),
 			FileDelayAfterPassword: config.Duration(96 * time.Hour),
 			Timezone:               "UTC",
@@ -116,7 +122,7 @@ func newTestScheduler(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier, *f
 	p := &fakePacker{}
 	tok := func() (string, error) { return "tok-fixed", nil }
 	s := New(cfg, store, n, p, tok, nil)
-	return s, store, n, p
+	return s, store, n, p, cfg
 }
 
 // base 是测试用的固定起点时间（避免不确定性）。
@@ -226,6 +232,42 @@ func TestMonthlyReminderProgression(t *testing.T) {
 	st, _ = store.Load()
 	if st.Phase != state.PhasePendingTrigger {
 		t.Fatalf("连续提醒结束后应为 PENDING_TRIGGER，实际 %s", st.Phase)
+	}
+}
+
+// 分钟级 reminder_interval 应让连续提醒期按分钟推进，无需等待整天。
+func TestMinuteLevelReminderInterval(t *testing.T) {
+	s, store, n, _, cfg := newTestSchedulerCfg(t)
+	cfg.TargetFlow.ReminderCount = 2
+	cfg.TargetFlow.ReminderInterval = config.Duration(time.Minute)
+	setConfirmed(t, store, base.Add(-time.Hour))
+
+	_ = s.Tick(base) // D0 发本月确认
+	if n.checkins != 1 {
+		t.Fatalf("确认日应发送本月确认，实际 %d", n.checkins)
+	}
+
+	// 第 1 分钟 → GRACE + 第 1 次提醒
+	_ = s.Tick(base.Add(time.Minute))
+	st, _ := store.Load()
+	if st.Phase != state.PhaseGrace {
+		t.Fatalf("第 1 分钟应为 GRACE，实际 %s", st.Phase)
+	}
+	if len(n.dailyReminders) != 1 || n.dailyReminders[0] != 1 {
+		t.Fatalf("第 1 分钟应发送第 1 次提醒，实际 %+v", n.dailyReminders)
+	}
+
+	// 第 2 分钟 → 最后一次提醒
+	_ = s.Tick(base.Add(2 * time.Minute))
+	if !n.lastReminderWasFinal {
+		t.Fatal("第 2 分钟（reminder_count=2）应为最后一次提醒")
+	}
+
+	// 第 3 分钟 → PENDING_TRIGGER
+	_ = s.Tick(base.Add(3 * time.Minute))
+	st, _ = store.Load()
+	if st.Phase != state.PhasePendingTrigger {
+		t.Fatalf("提醒期结束后应为 PENDING_TRIGGER，实际 %s", st.Phase)
 	}
 }
 

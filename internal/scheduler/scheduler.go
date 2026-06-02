@@ -20,8 +20,8 @@ import (
 type Notifier interface {
 	// SendCheckin 发送带确认按钮的 Telegram 消息（携带一次性 token）。
 	SendCheckin(token string) error
-	// SendDailyReminder 发送连续提醒阶段的 Telegram 提醒。
-	SendDailyReminder(day int, isLast bool) error
+	// SendReminder 发送连续提醒阶段的第 n 次 Telegram 提醒。
+	SendReminder(n int, isLast bool) error
 	// SendStageReminder 在每个受益人邮件阶段前提醒用户本人。
 	SendStageReminder(stage state.Stage) error
 	// SendHeartbeat 发送服务巡检心跳（Telegram）。
@@ -156,33 +156,33 @@ func (s *Scheduler) tickAlive(st *state.State, now time.Time) error {
 }
 
 func (s *Scheduler) tickOutstandingCheckin(st *state.State, now time.Time) error {
-	days := reminderDaysSince(*st.LastCheckinSentAt, now)
-	if days < 1 {
+	n := remindersSent(*st.LastCheckinSentAt, now, s.cfg.TargetFlow.ReminderInterval.Std())
+	if n < 1 {
 		s.maybeHeartbeat(st, now)
 		return s.store.Save(st)
 	}
 
 	if st.Phase == state.PhaseAlive {
 		st.Phase = state.PhaseGrace
-		s.logf("进入 GRACE：本月确认已漏 %d 天", days)
+		s.logf("进入 GRACE：本月确认已漏第 %d 次提醒", n)
 	}
 
-	if days <= s.cfg.TargetFlow.DailyReminderDays {
-		if st.MissCount < days {
-			isLast := days == s.cfg.TargetFlow.DailyReminderDays
-			if err := s.notifier.SendDailyReminder(days, isLast); err != nil {
+	if n <= s.cfg.TargetFlow.ReminderCount {
+		if st.MissCount < n {
+			isLast := n == s.cfg.TargetFlow.ReminderCount
+			if err := s.notifier.SendReminder(n, isLast); err != nil {
 				s.logf("发送连续提醒失败: %v", err)
-				_ = s.store.Audit("daily_reminder_failed", err.Error(), now)
+				_ = s.store.Audit("reminder_failed", err.Error(), now)
 			} else {
-				st.MissCount = days
-				_ = s.store.Audit("daily_reminder_sent", fmt.Sprintf("day=%d,last=%v", days, isLast), now)
+				st.MissCount = n
+				_ = s.store.Audit("reminder_sent", fmt.Sprintf("n=%d,last=%v", n, isLast), now)
 			}
 		}
 	} else {
 		st.Phase = state.PhasePendingTrigger
-		st.MissCount = days
+		st.MissCount = n
 		st.FinalWarningAt = ptr(now)
-		_ = s.store.Audit("entered_pending_trigger", fmt.Sprintf("reminder_days=%d", days), now)
+		_ = s.store.Audit("entered_pending_trigger", fmt.Sprintf("reminder_count=%d", n), now)
 		s.logf("连续提醒期已结束，进入 PENDING_TRIGGER")
 	}
 
@@ -428,11 +428,14 @@ func daysInMonth(year int, month time.Month) int {
 	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
-func reminderDaysSince(checkinSentAt time.Time, now time.Time) int {
-	if now.Before(checkinSentAt.Add(24 * time.Hour)) {
+func remindersSent(checkinSentAt time.Time, now time.Time, interval time.Duration) int {
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	if now.Before(checkinSentAt.Add(interval)) {
 		return 0
 	}
-	return int(now.Sub(checkinSentAt) / (24 * time.Hour))
+	return int(now.Sub(checkinSentAt) / interval)
 }
 
 func loadLocation(name string) *time.Location {

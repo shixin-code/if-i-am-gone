@@ -53,8 +53,6 @@ func run(args []string, out io.Writer) error {
 		return runTestEmail(args[1:], out)
 	case "pack":
 		return runPack(args[1:], out)
-	case "drill":
-		return runDrill(args[1:], out)
 	case "-h", "--help", "help":
 		printUsage(out)
 		return nil
@@ -70,15 +68,13 @@ func printUsage(out io.Writer) {
   ifgonectl cleanup-tokens --config config.yaml
   ifgonectl test-email --config config.yaml [--to you@example.com]
   ifgonectl pack --config config.yaml [--save-state]
-  ifgonectl drill advance-checkin --config config.yaml --days 2
 
 命令:
   status          查看当前 state.db 状态摘要
   dry-run         根据当前状态给出下一步动作提示，不发送消息、不打包
   cleanup-tokens  清理已过期下载 token
   test-email      发送一封 SMTP 测试邮件
-  pack            手动打包 source_dir；加 --save-state 可写入当前 state
-  drill           测试演练辅助命令，只调整 state 时间戳，不发送消息、不打包`)
+  pack            手动打包 source_dir；加 --save-state 可写入当前 state`)
 }
 
 func loadConfigAndStore(args []string, command string) (*config.Config, *state.Store, func() error, error) {
@@ -240,68 +236,6 @@ func runPack(args []string, out io.Writer) error {
 		}
 		fmt.Fprintln(out, "state_saved: true")
 	}
-	return nil
-}
-
-func runDrill(args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("drill 需要子命令，例如 advance-checkin")
-	}
-	switch args[0] {
-	case "advance-checkin":
-		return runDrillAdvanceCheckin(args[1:], out)
-	default:
-		return fmt.Errorf("未知 drill 子命令: %s", args[0])
-	}
-}
-
-func runDrillAdvanceCheckin(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("drill advance-checkin", flag.ContinueOnError)
-	configPath := fs.String("config", "config.yaml", "配置文件路径")
-	days := fs.Int("days", 2, "把 last_checkin_sent_at 调整为当前时间之前的天数")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *days < 1 {
-		return fmt.Errorf("--days 必须 >= 1")
-	}
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-	if err := cfg.ValidateRuntimePaths(); err != nil {
-		return err
-	}
-	store, err := state.Open(filepath.Join(cfg.StateDir, "state.db"))
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	st, err := store.Load()
-	if err != nil {
-		return err
-	}
-	if st.PendingToken == "" || st.LastCheckinSentAt == nil {
-		return fmt.Errorf("当前没有待确认的 Telegram token，请先运行主程序发送 D0 安全确认")
-	}
-	if st.Phase != state.PhaseAlive && st.Phase != state.PhaseGrace {
-		return fmt.Errorf("当前阶段 %s 不适合 advance-checkin，请仅在 D0/连续提醒演练阶段使用", st.Phase)
-	}
-	now := time.Now().UTC()
-	shifted := now.Add(-time.Duration(*days) * 24 * time.Hour)
-	st.LastCheckinSentAt = &shifted
-	if st.MissCount > *days {
-		st.MissCount = *days
-	}
-	if err := store.Save(st); err != nil {
-		return err
-	}
-	if err := store.Audit("drill_advance_checkin", fmt.Sprintf("days=%d", *days), now); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "drill_advance_checkin: ok\n")
-	fmt.Fprintf(out, "last_checkin_sent_at: %s\n", shifted.Format(time.RFC3339))
-	fmt.Fprintf(out, "next_hint: run ifgone tick or wait for the next tick\n")
 	return nil
 }
 

@@ -112,10 +112,10 @@ func TestNotifierTelegramTemplates(t *testing.T) {
 	if bot.checkinText != "确认文本" || bot.buttonText != "按钮文本" || bot.checkinToken != "tok" {
 		t.Fatalf("checkin 不对: text=%q button=%q token=%q", bot.checkinText, bot.buttonText, bot.checkinToken)
 	}
-	if err := n.SendDailyReminder(3, false); err != nil {
+	if err := n.SendReminder(3, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := n.SendDailyReminder(7, true); err != nil {
+	if err := n.SendReminder(7, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := n.SendStageReminder(state.StagePassword); err != nil {

@@ -43,7 +43,7 @@ go build ./cmd/ifgone
 ./ifgone --config config.yaml --tick 1m
 ```
 
-测试用快速节奏：把 `config.yaml` 的 `target_flow` 改成短周期（如 `daily_reminder_days: 1`、`password_delay_after_warn: 1m`、`file_delay_after_password: 1m`），配合 `--tick 10s`，可较快演练目标流程。月度确认日仍由 `checkin_day_of_month` 控制。
+测试用快速节奏：把 `config.yaml` 的 `target_flow` 改成短周期（如 `reminder_interval: 1m`、`reminder_count: 2`、`password_delay_after_warn: 1m`、`file_delay_after_password: 1m`），配合 `--tick 10s`，几分钟即可走完整个目标流程，无需任何辅助命令。月度确认日仍由 `checkin_day_of_month` 控制。
 详细演练步骤见 [`docs/quick-flow-drill.md`](docs/quick-flow-drill.md)。
 真实 Telegram、SMTP、self_hosted 或 S3-compatible 下载链路的最终验收见 [`docs/real-flow-integration-checklist.md`](docs/real-flow-integration-checklist.md)。
 
@@ -79,7 +79,8 @@ docker compose logs -f
 | 参数 | 含义 | 默认示例 |
 |---|---|---|
 | `checkin_day_of_month` | 每月几号发送安全确认 | `1` |
-| `daily_reminder_days` | 未确认后连续提醒几天 | `7` |
+| `reminder_count` | 未确认后连续提醒几次 | `7` |
+| `reminder_interval` | 两次提醒间隔（Go duration） | `24h` |
 | `password_delay_after_warn` | 预提醒邮件成功后多久发送密码 | `72h` |
 | `file_delay_after_password` | 密码邮件成功后多久发送下载链接 | `168h` |
 | `timezone` | 月度确认日和预计日期展示时区 | `Asia/Shanghai` |
@@ -120,11 +121,10 @@ go build ./cmd/ifgonectl
 ./ifgonectl cleanup-tokens --config config.yaml
 ./ifgonectl test-email --config config.yaml --to you@example.com
 ./ifgonectl pack --config config.yaml --save-state
-./ifgonectl drill advance-checkin --config config.yaml --days 2
 ```
 
 注意：`pack --save-state` 会把新归档路径、SHA256、密码和打包时间写入 `state.db`，仅在你明确需要手工打包时使用。
-`drill advance-checkin` 只用于测试演练：它要求已有待确认 token，并只回拨确认发送时间戳，不发送消息、不打包、不伪造邮件投递。
+测试演练不再需要回拨时间戳的辅助命令——把 `target_flow.reminder_interval` 设为分钟级（如 `1m`）即可让连续提醒期分钟级自然推进。
 
 ## 局限与可靠性
 

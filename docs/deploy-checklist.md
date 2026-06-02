@@ -30,7 +30,7 @@
 ## 4. 配置目标流程
 
 - 设置 `target_flow.checkin_day_of_month`，例如每月 1 号。
-- 设置 `target_flow.daily_reminder_days`，默认 7 天。
+- 设置 `target_flow.reminder_count`（提醒次数，默认 7）和 `target_flow.reminder_interval`（提醒间隔，默认 24h）。
 - 设置 `target_flow.password_delay_after_warn`，默认 72h。
 - 设置 `target_flow.file_delay_after_password`，默认 168h。
 - 设置 `target_flow.timezone`，建议 `Asia/Shanghai`。

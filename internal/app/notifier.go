@@ -55,20 +55,20 @@ func (n *Notifier) SendCheckin(token string) error {
 	return n.bot.SendCheckin(text, buttonText, token)
 }
 
-func (n *Notifier) SendDailyReminder(day int, isLast bool) error {
+func (n *Notifier) SendReminder(count int, isLast bool) error {
 	t := n.cfg.Lang("zh")
 	text := t.DailyReminderTelegram
 	if isLast && t.FinalReminderTelegram != "" {
 		text = t.FinalReminderTelegram
 	}
 	if text == "" && isLast {
-		text = "安全确认提醒：这是本轮连续提醒的最后一天。\n如果你一切正常，请尽快点击最新确认消息中的“确认正常”按钮。若仍未确认，系统将进入预设通知流程。"
+		text = "安全确认提醒：这是本轮连续提醒的最后一次。\n如果你一切正常，请尽快点击最新确认消息中的“确认正常”按钮。若仍未确认，系统将进入预设通知流程。"
 	}
 	if text == "" {
-		text = "安全确认提醒：系统已<N>天没收到你的确认。\n如果你一切正常，请点击最新确认消息中的“确认正常”按钮。"
+		text = "安全确认提醒：系统已第 <N> 次未收到你的确认。\n如果你一切正常，请点击最新确认消息中的“确认正常”按钮。"
 	}
 	return n.bot.SendMessage(templates.Render(text, map[string]string{
-		"N": fmt.Sprintf("%d", day),
+		"N": fmt.Sprintf("%d", count),
 	}))
 }
 

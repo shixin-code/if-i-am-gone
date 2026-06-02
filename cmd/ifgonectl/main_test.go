@@ -32,7 +32,8 @@ source_dir: ` + source + `
 state_dir: ` + stateDir + `
 target_flow:
   checkin_day_of_month: 1
-  daily_reminder_days: 7
+  reminder_count: 7
+  reminder_interval: 24h
   password_delay_after_warn: 72h
   file_delay_after_password: 168h
   timezone: UTC
@@ -166,61 +167,6 @@ func TestCleanupTokens(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "cleanup_expired_tokens: ok") {
 		t.Fatalf("cleanup 输出不对: %s", out.String())
-	}
-}
-
-func TestDrillAdvanceCheckinRequiresPendingCheckin(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := writeCtlConfig(t, dir)
-	var out bytes.Buffer
-	err := run([]string{"drill", "advance-checkin", "--config", cfgPath, "--days", "2"}, &out)
-	if err == nil || !strings.Contains(err.Error(), "当前没有待确认") {
-		t.Fatalf("期望缺少 pending token 失败，实际 err=%v out=%s", err, out.String())
-	}
-}
-
-func TestDrillAdvanceCheckinShiftsCheckinTime(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := writeCtlConfig(t, dir)
-	store, err := state.Open(filepath.Join(dir, "state", "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	st.PendingToken = "pending"
-	st.LastCheckinSentAt = &now
-	if err := store.Save(st); err != nil {
-		t.Fatal(err)
-	}
-	_ = store.Close()
-
-	var out bytes.Buffer
-	if err := run([]string{"drill", "advance-checkin", "--config", cfgPath, "--days", "3"}, &out); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "drill_advance_checkin: ok") {
-		t.Fatalf("drill 输出不对: %s", out.String())
-	}
-
-	store, err = state.Open(filepath.Join(dir, "state", "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	got, err := store.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.LastCheckinSentAt == nil {
-		t.Fatal("last_checkin_sent_at 不应为空")
-	}
-	age := time.Since(*got.LastCheckinSentAt)
-	if age < 72*time.Hour || age > 73*time.Hour {
-		t.Fatalf("last_checkin_sent_at 未回拨约 3 天: %s", age)
 	}
 }
 

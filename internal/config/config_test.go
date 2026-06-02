@@ -81,8 +81,8 @@ func TestLoadExpandsEnvAndAppliesDefaults(t *testing.T) {
 	if cfg.TargetFlow.CheckinDayOfMonth != 1 {
 		t.Fatalf("默认确认日不对: %d", cfg.TargetFlow.CheckinDayOfMonth)
 	}
-	if cfg.TargetFlow.DailyReminderDays != 7 {
-		t.Fatalf("默认连续提醒天数不对: %d", cfg.TargetFlow.DailyReminderDays)
+	if cfg.TargetFlow.ReminderCount != 7 {
+		t.Fatalf("默认连续提醒次数不对: %d", cfg.TargetFlow.ReminderCount)
 	}
 	if cfg.TargetFlow.PasswordDelayAfterWarn.Std() != 72*time.Hour {
 		t.Fatalf("密码延迟默认值不对: %s", cfg.TargetFlow.PasswordDelayAfterWarn.Std())
@@ -109,7 +109,8 @@ func TestValidateRejectsInvalidTargetFlowAndDownload(t *testing.T) {
 	raw += `
 target_flow:
   checkin_day_of_month: 32
-  daily_reminder_days: -1
+  reminder_count: -1
+  reminder_interval: -1s
   password_delay_after_warn: -1s
   file_delay_after_password: -1s
   timezone: Not/AZone
@@ -122,7 +123,7 @@ target_flow:
 	msg := err.Error()
 	for _, want := range []string{
 		"target_flow.checkin_day_of_month",
-		"target_flow.daily_reminder_days",
+		"target_flow.reminder_count",
 		"target_flow.password_delay_after_warn",
 		"target_flow.file_delay_after_password",
 		"target_flow.timezone",

@@ -18,6 +18,15 @@
 - state 中归档密码可选加密保存，并兼容旧明文 state。
 - 关键中文文案已集中到 `templates.zh`。
 
+## 破坏性变更：连续提醒改为「次数 + 可配间隔」
+
+- `target_flow.daily_reminder_days`（按天）**已移除**，拆分为：
+  - `target_flow.reminder_count`：连续提醒几次（默认 7）。
+  - `target_flow.reminder_interval`：两次提醒间隔，Go duration 写法（默认 `24h`，天写成 `168h`）。
+- 旧 `daily_reminder_days` 字段会被 YAML 静默忽略，`reminder_count` 取默认 7。**升级时必须**在 `config.yaml` 把 `daily_reminder_days` 改成 `reminder_count` + 新增 `reminder_interval`，否则节奏退回默认 7×24h。
+- `ifgonectl drill advance-checkin` 命令**已删除**：有了分钟级 `reminder_interval`，测试只需把它设为 `1m` 即可让连续提醒期按分钟自然推进，不再需要回拨时间戳。
+- Notifier 接口方法 `SendDailyReminder` 改名为 `SendReminder`；审计事件 `daily_reminder_sent/failed` 改为 `reminder_sent/failed`。`miss_count` 语义由「漏了几天」变为「已发几次提醒」，state 表结构不变。
+
 ## MVP 变更
 
 MVP 已具备以下能力：

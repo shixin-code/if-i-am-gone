@@ -33,7 +33,8 @@ printf 'quick flow drill\n' > data/source/drill.txt
 - `beneficiaries` 改为测试收件人。
 - `download.mode: self_hosted`。
 - `download.self_hosted.public_base_url` 改为本机或测试 VPS 可访问地址。
-- `target_flow.daily_reminder_days: 1`。
+- `target_flow.reminder_count: 2`。
+- `target_flow.reminder_interval: 1m`。
 - `target_flow.password_delay_after_warn: 1m`。
 - `target_flow.file_delay_after_password: 1m`。
 - `target_flow.checkin_day_of_month` 改为今天所在日期，或先用 `ifgonectl dry-run` 确认下一步动作。
@@ -56,30 +57,24 @@ go build ./cmd/ifgone ./cmd/ifgonectl
 
 ## 测试时间推进
 
-连续提醒按“天”计算，完整真实节奏无法仅靠 `--tick 10s` 压缩为秒级。测试环境可在 D0 安全确认消息已发送后，用受控辅助命令把 `last_checkin_sent_at` 回拨到几天前，让下一次 tick 自然进入连续提醒或预提醒阶段：
+连续提醒的节奏由 `target_flow.reminder_interval`（两次提醒间隔）和 `reminder_count`（提醒次数）共同决定。测试环境把 `reminder_interval` 设为分钟级（如 `1m`），配合 `--tick 10s`，连续提醒期会**按分钟自然推进**，无需任何回拨时间戳的辅助命令：
 
-```bash
-./ifgonectl drill advance-checkin --config config.yaml --days 2
-```
+- D0 发送本月确认后，每过 `reminder_interval` 发一次提醒；
+- 发满 `reminder_count` 次后，下一次 tick 进入 `PENDING_TRIGGER`，开始受益人通知流程。
 
-注意：
-
-- 该命令只调整测试 state 时间戳，不发送消息、不打包、不伪造邮件投递结果。
-- 该命令要求当前已有待确认的 Telegram token，也就是 D0 安全确认已经发送。
-- 只建议在测试库或演练环境使用；正式库不要为了“加速流程”随意回拨时间。
+例如 `reminder_count: 2` + `reminder_interval: 1m`，约 3 分钟即可从 D0 走到预提醒阶段。正式库请勿使用分钟级 interval。
 
 ## 主链演练
 
 | 阶段 | 触发方式 | 预期结果 | 验收证据 |
 |---|---|---|---|
 | D0 安全确认 | 启动后到达本月确认日 | Telegram 收到“本月安全确认”和“确认正常”按钮 | Telegram 消息、`pending_token: <set>` |
-| 连续提醒 | 不点击确认，等待约 24h；测试环境可用 `ifgonectl drill advance-checkin --days 1` 后等待下一次 tick | Telegram 收到连续提醒，最后一天提醒进入预设通知流程 | Telegram 消息、`miss_count` 增加 |
+| 连续提醒 | 不点击确认，每过 `reminder_interval` 一次 | Telegram 收到第 N 次提醒，第 `reminder_count` 次进入最后提醒文案 | Telegram 消息、`miss_count` 增加 |
 | 受益人预提醒 | 连续提醒期结束后下一次 tick | 用户收到阶段 Telegram；受益人收到预提醒邮件 | 邮件主题 `[重要] 一封预定的信息`，state 进入 `WARNED` |
 | 密码阶段 | 预提醒成功后等待 `password_delay_after_warn` | 系统现场打包；用户收到阶段 Telegram；受益人收到解压密码邮件 | `data/state/archives/archive-*.zip`、密码邮件、state 进入 `PASSWORD_SENT` |
 | 下载链接阶段 | 密码邮件成功后等待 `file_delay_after_password` | 用户收到阶段 Telegram；受益人收到下载链接邮件 | 下载链接邮件、`download_tokens` 记录、state 进入 `FILE_SENT` |
 | 完成 | 文件阶段成功后下一次 tick | 流程进入 `COMPLETED` | `ifgonectl status` 显示 `phase: COMPLETED` |
 
-> 注意：若需要直接进入预提醒阶段，可在 D0 安全确认已发送后执行 `ifgonectl drill advance-checkin --days <daily_reminder_days+1>`，再等待下一次 tick。
 
 ## 取消路径演练
 

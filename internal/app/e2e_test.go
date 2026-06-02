@@ -27,7 +27,8 @@ func e2eConfig(stateDir string) *config.Config {
 	cfg.StateDir = stateDir
 	cfg.SourceDir = filepath.Join(stateDir, "source")
 	cfg.TargetFlow.CheckinDayOfMonth = 1
-	cfg.TargetFlow.DailyReminderDays = 1
+	cfg.TargetFlow.ReminderCount = 1
+	cfg.TargetFlow.ReminderInterval = config.Duration(24 * time.Hour)
 	cfg.TargetFlow.PasswordDelayAfterWarn = config.Duration(time.Minute)
 	cfg.TargetFlow.FileDelayAfterPassword = config.Duration(time.Minute)
 	cfg.Download.LinkExpiry = config.Duration(time.Hour)

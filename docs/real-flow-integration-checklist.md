@@ -39,19 +39,14 @@ go build ./cmd/ifgone ./cmd/ifgonectl
 ```yaml
 target_flow:
   checkin_day_of_month: <今天的日期>
-  daily_reminder_days: 1
+  reminder_count: 2
+  reminder_interval: 1m
   password_delay_after_warn: 1m
   file_delay_after_password: 1m
   timezone: Asia/Shanghai
 ```
 
-注意：连续提醒按“天”计算，无法仅靠 `--tick 10s` 完全压缩。需要完整走到受益人预提醒时，可在 D0 安全确认已发送后使用受控测试辅助命令推进时间：
-
-```bash
-./ifgonectl drill advance-checkin --config config.yaml --days 2
-```
-
-该命令只回拨确认发送时间戳，不发送消息、不打包、不伪造邮件投递结果。只建议在测试库或演练环境使用。
+把 `reminder_interval` 设为分钟级后，连续提醒期会按分钟自然推进，配合 `--tick 10s` 即可几分钟走完整链，无需任何回拨时间戳的辅助命令。正式库请勿使用分钟级 interval。
 
 ## 联调路径 A：self_hosted 下载
 

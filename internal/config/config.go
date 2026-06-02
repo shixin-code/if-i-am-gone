@@ -35,7 +35,8 @@ type Config struct {
 // TargetFlow 是目标流程的节奏配置：每月确认、连续提醒、密码阶段打包、下载链接投递。
 type TargetFlow struct {
 	CheckinDayOfMonth      int      `yaml:"checkin_day_of_month"`
-	DailyReminderDays      int      `yaml:"daily_reminder_days"`
+	ReminderCount          int      `yaml:"reminder_count"`    // 漏确认后连续提醒几次
+	ReminderInterval       Duration `yaml:"reminder_interval"` // 两次提醒间隔（Go duration: 1m/2h/168h）
 	PasswordDelayAfterWarn Duration `yaml:"password_delay_after_warn"`
 	FileDelayAfterPassword Duration `yaml:"file_delay_after_password"`
 	Timezone               string   `yaml:"timezone"`
@@ -228,8 +229,11 @@ func (c *Config) applyDefaults() {
 	if c.TargetFlow.CheckinDayOfMonth == 0 {
 		c.TargetFlow.CheckinDayOfMonth = 1
 	}
-	if c.TargetFlow.DailyReminderDays == 0 {
-		c.TargetFlow.DailyReminderDays = 7
+	if c.TargetFlow.ReminderCount == 0 {
+		c.TargetFlow.ReminderCount = 7
+	}
+	if c.TargetFlow.ReminderInterval.Std() == 0 {
+		c.TargetFlow.ReminderInterval = Duration(24 * time.Hour)
 	}
 	if c.TargetFlow.PasswordDelayAfterWarn.Std() == 0 {
 		c.TargetFlow.PasswordDelayAfterWarn = Duration(72 * time.Hour)
@@ -275,8 +279,11 @@ func (c *Config) Validate() error {
 	if c.TargetFlow.CheckinDayOfMonth < 1 || c.TargetFlow.CheckinDayOfMonth > 31 {
 		errs = append(errs, "target_flow.checkin_day_of_month 必须在 1..31 之间")
 	}
-	if c.TargetFlow.DailyReminderDays < 1 {
-		errs = append(errs, "target_flow.daily_reminder_days 必须 >= 1")
+	if c.TargetFlow.ReminderCount < 1 {
+		errs = append(errs, "target_flow.reminder_count 必须 >= 1")
+	}
+	if c.TargetFlow.ReminderInterval.Std() <= 0 {
+		errs = append(errs, "target_flow.reminder_interval 必须为正")
 	}
 	if c.TargetFlow.PasswordDelayAfterWarn.Std() <= 0 {
 		errs = append(errs, "target_flow.password_delay_after_warn 必须为正")
