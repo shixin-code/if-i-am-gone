@@ -1,5 +1,4 @@
-// Package mailer 通过 SMTP 给受益人发送三阶段邮件（预警/密码/文件）。
-// MVP 阶段文件投递走附件；超阈值的大文件链接投递由 delivery 包决定。
+// Package mailer 通过 SMTP 发送纯文本邮件，并保留 MIME 附件构造能力供测试或后续工具使用。
 package mailer
 
 import (

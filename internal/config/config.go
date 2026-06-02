@@ -3,6 +3,8 @@ package config
 
 import (
 	"fmt"
+	"net/mail"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -14,16 +16,17 @@ import (
 
 // Config 是整个应用的配置根。所有时间间隔均为 time.Duration。
 type Config struct {
-	SourceDir       string          `yaml:"source_dir"`
-	Intervals       Intervals       `yaml:"intervals"`
-	Archive         Archive         `yaml:"archive"`
-	Telegram        Telegram        `yaml:"telegram"`
-	SMTP            SMTP            `yaml:"smtp"`
-	Beneficiaries   []Beneficiary   `yaml:"beneficiaries"`
-	Download        Download        `yaml:"download"`
-	StateProtection StateProtection `yaml:"state_protection"`
-	Reliability     Reliability     `yaml:"reliability"`
-	Logging         Logging         `yaml:"logging"`
+	SourceDir       string               `yaml:"source_dir"`
+	Intervals       Intervals            `yaml:"intervals"`
+	TargetFlow      TargetFlow           `yaml:"target_flow"`
+	Archive         Archive              `yaml:"archive"`
+	Telegram        Telegram             `yaml:"telegram"`
+	SMTP            SMTP                 `yaml:"smtp"`
+	Beneficiaries   []Beneficiary        `yaml:"beneficiaries"`
+	Download        Download             `yaml:"download"`
+	StateProtection StateProtection      `yaml:"state_protection"`
+	Reliability     Reliability          `yaml:"reliability"`
+	Logging         Logging              `yaml:"logging"`
 	Templates       map[string]Templates `yaml:"templates"` // key 为语言码 zh/en
 
 	// StateDir 是 state.db、加密包、日志的存放目录。默认取 Logging.File 的目录或 /data/state。
@@ -40,10 +43,19 @@ type Intervals struct {
 	FileDelay       Duration `yaml:"file_delay"`
 }
 
+// TargetFlow 是目标流程的节奏配置：每月确认、连续提醒、密码阶段打包、下载链接投递。
+type TargetFlow struct {
+	CheckinDayOfMonth      int      `yaml:"checkin_day_of_month"`
+	DailyReminderDays      int      `yaml:"daily_reminder_days"`
+	PasswordDelayAfterWarn Duration `yaml:"password_delay_after_warn"`
+	FileDelayAfterPassword Duration `yaml:"file_delay_after_password"`
+	Timezone               string   `yaml:"timezone"`
+}
+
 type Archive struct {
-	KeepArchives        int    `yaml:"keep_archives"`
-	PasswordLength      int    `yaml:"password_length"`
-	LargeFileThreshold  Bytes  `yaml:"large_file_threshold"`
+	KeepArchives       int   `yaml:"keep_archives"`
+	PasswordLength     int   `yaml:"password_length"`
+	LargeFileThreshold Bytes `yaml:"large_file_threshold"`
 }
 
 type Telegram struct {
@@ -95,8 +107,16 @@ type StateProtection struct {
 }
 
 type Reliability struct {
-	HeartbeatEnabled  bool     `yaml:"heartbeat_enabled"`
-	HeartbeatInterval Duration `yaml:"heartbeat_interval"`
+	HeartbeatEnabled  bool              `yaml:"heartbeat_enabled"`
+	HeartbeatInterval Duration          `yaml:"heartbeat_interval"`
+	Healthcheck       HealthcheckConfig `yaml:"healthcheck"`
+}
+
+type HealthcheckConfig struct {
+	Enabled  bool     `yaml:"enabled"`
+	PingURL  string   `yaml:"ping_url"`
+	Interval Duration `yaml:"interval"`
+	Timeout  Duration `yaml:"timeout"`
 }
 
 type Logging struct {
@@ -106,15 +126,25 @@ type Logging struct {
 
 // Templates 是单一语言的全部文案模板。占位符用 {name}、{password}、{url} 等。
 type Templates struct {
-	CheckinTelegram      string `yaml:"checkin_telegram"`
-	FinalWarningTelegram string `yaml:"final_warning_telegram"`
-	WarnEmailSubject     string `yaml:"warn_email_subject"`
-	WarnEmailBody        string `yaml:"warn_email_body"`
-	PasswordEmailSubject string `yaml:"password_email_subject"`
-	PasswordEmailBody    string `yaml:"password_email_body"`
-	FileEmailSubject     string `yaml:"file_email_subject"`
-	FileEmailBodyAttach  string `yaml:"file_email_body_attach"`
-	FileEmailBodyLink    string `yaml:"file_email_body_link"`
+	CheckinTelegram       string `yaml:"checkin_telegram"`
+	CheckinButtonText     string `yaml:"checkin_button_text"`
+	CheckinAcceptedReply  string `yaml:"checkin_accepted_reply"`
+	CheckinExpiredReply   string `yaml:"checkin_expired_reply"`
+	CheckinErrorReply     string `yaml:"checkin_error_reply"`
+	DailyReminderTelegram string `yaml:"daily_reminder_telegram"`
+	FinalReminderTelegram string `yaml:"final_reminder_telegram"`
+	WarnStageTelegram     string `yaml:"warn_stage_telegram"`
+	PasswordStageTelegram string `yaml:"password_stage_telegram"`
+	FileStageTelegram     string `yaml:"file_stage_telegram"`
+	CancelFlowTelegram    string `yaml:"cancel_flow_telegram"`
+	HeartbeatTelegram     string `yaml:"heartbeat_telegram"`
+	FinalWarningTelegram  string `yaml:"final_warning_telegram"`
+	WarnEmailSubject      string `yaml:"warn_email_subject"`
+	WarnEmailBody         string `yaml:"warn_email_body"`
+	PasswordEmailSubject  string `yaml:"password_email_subject"`
+	PasswordEmailBody     string `yaml:"password_email_body"`
+	FileEmailSubject      string `yaml:"file_email_subject"`
+	FileEmailBodyLink     string `yaml:"file_email_body_link"`
 }
 
 // Duration 包装 time.Duration，让 YAML 里可写 "24h"、"72h" 这样的字符串。
@@ -206,11 +236,44 @@ func (c *Config) applyDefaults() {
 	if c.Archive.LargeFileThreshold == 0 {
 		c.Archive.LargeFileThreshold = Bytes(20 << 20) // 20MB
 	}
+	if c.TargetFlow.CheckinDayOfMonth == 0 {
+		c.TargetFlow.CheckinDayOfMonth = 1
+	}
+	if c.TargetFlow.DailyReminderDays == 0 {
+		c.TargetFlow.DailyReminderDays = 7
+	}
+	if c.TargetFlow.PasswordDelayAfterWarn.Std() == 0 {
+		c.TargetFlow.PasswordDelayAfterWarn = c.Intervals.PasswordDelay
+	}
+	if c.TargetFlow.PasswordDelayAfterWarn.Std() == 0 {
+		c.TargetFlow.PasswordDelayAfterWarn = Duration(72 * time.Hour)
+	}
+	if c.TargetFlow.FileDelayAfterPassword.Std() == 0 {
+		c.TargetFlow.FileDelayAfterPassword = c.Intervals.FileDelay
+	}
+	if c.TargetFlow.FileDelayAfterPassword.Std() == 0 {
+		c.TargetFlow.FileDelayAfterPassword = Duration(168 * time.Hour)
+	}
+	if c.TargetFlow.Timezone == "" {
+		c.TargetFlow.Timezone = "Asia/Shanghai"
+	}
 	if c.Download.Mode == "" {
 		c.Download.Mode = "self_hosted"
 	}
+	if c.Download.LinkExpiry.Std() == 0 {
+		c.Download.LinkExpiry = Duration(336 * time.Hour)
+	}
 	if c.Download.MaxDownloads == 0 {
 		c.Download.MaxDownloads = 5
+	}
+	if c.Download.SelfHosted.ListenPort == 0 {
+		c.Download.SelfHosted.ListenPort = 8080
+	}
+	if c.Reliability.Healthcheck.Interval.Std() == 0 {
+		c.Reliability.Healthcheck.Interval = Duration(10 * time.Minute)
+	}
+	if c.Reliability.Healthcheck.Timeout.Std() == 0 {
+		c.Reliability.Healthcheck.Timeout = Duration(10 * time.Second)
 	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "INFO"
@@ -235,6 +298,21 @@ func (c *Config) Validate() error {
 	if c.Intervals.MissThreshold < 1 {
 		errs = append(errs, "intervals.miss_threshold 必须 >= 1")
 	}
+	if c.TargetFlow.CheckinDayOfMonth < 1 || c.TargetFlow.CheckinDayOfMonth > 31 {
+		errs = append(errs, "target_flow.checkin_day_of_month 必须在 1..31 之间")
+	}
+	if c.TargetFlow.DailyReminderDays < 1 {
+		errs = append(errs, "target_flow.daily_reminder_days 必须 >= 1")
+	}
+	if c.TargetFlow.PasswordDelayAfterWarn.Std() <= 0 {
+		errs = append(errs, "target_flow.password_delay_after_warn 必须为正")
+	}
+	if c.TargetFlow.FileDelayAfterPassword.Std() <= 0 {
+		errs = append(errs, "target_flow.file_delay_after_password 必须为正")
+	}
+	if _, err := time.LoadLocation(c.TargetFlow.Timezone); err != nil {
+		errs = append(errs, fmt.Sprintf("target_flow.timezone 无法加载: %v", err))
+	}
 	if c.Telegram.BotToken == "" {
 		errs = append(errs, "telegram.bot_token 不能为空（检查 ${TELEGRAM_BOT_TOKEN} 是否已设置）")
 	}
@@ -244,30 +322,195 @@ func (c *Config) Validate() error {
 	if c.SMTP.Host == "" {
 		errs = append(errs, "smtp.host 不能为空")
 	}
+	if c.SMTP.Port < 1 || c.SMTP.Port > 65535 {
+		errs = append(errs, "smtp.port 必须在 1..65535 之间")
+	}
+	if strings.TrimSpace(c.SMTP.Username) == "" {
+		errs = append(errs, "smtp.username 不能为空")
+	}
+	if strings.TrimSpace(c.SMTP.Password) == "" {
+		errs = append(errs, "smtp.password 不能为空（检查 ${SMTP_PASSWORD} 是否已设置）")
+	}
 	if c.SMTP.FromEmail == "" {
 		errs = append(errs, "smtp.from_email 不能为空")
+	} else if !isEmail(c.SMTP.FromEmail) {
+		errs = append(errs, "smtp.from_email 格式不正确")
 	}
 	if len(c.Beneficiaries) == 0 {
 		errs = append(errs, "beneficiaries 至少需要一个受益人")
 	}
 	for i, b := range c.Beneficiaries {
+		if strings.TrimSpace(b.Name) == "" {
+			errs = append(errs, fmt.Sprintf("beneficiaries[%d].name 不能为空", i))
+		}
 		if b.Email == "" {
 			errs = append(errs, fmt.Sprintf("beneficiaries[%d].email 不能为空", i))
+		} else if !isEmail(b.Email) {
+			errs = append(errs, fmt.Sprintf("beneficiaries[%d].email 格式不正确", i))
 		}
 		if b.Lang == "" {
 			c.Beneficiaries[i].Lang = "zh" // 默认中文
+		} else if _, ok := c.Templates[b.Lang]; !ok {
+			errs = append(errs, fmt.Sprintf("beneficiaries[%d].lang=%q 未在 templates 中配置", i, b.Lang))
 		}
 	}
 	if c.Download.Mode != "self_hosted" && c.Download.Mode != "s3" {
 		errs = append(errs, "download.mode 必须为 self_hosted 或 s3")
 	}
+	if c.Download.LinkExpiry.Std() <= 0 {
+		errs = append(errs, "download.link_expiry 必须为正")
+	}
+	if c.Download.MaxDownloads < 1 {
+		errs = append(errs, "download.max_downloads 必须 >= 1")
+	}
+	if c.Download.Mode == "self_hosted" {
+		if c.Download.SelfHosted.PublicBaseURL == "" {
+			errs = append(errs, "download.self_hosted.public_base_url 不能为空")
+		} else if !isHTTPURL(c.Download.SelfHosted.PublicBaseURL) {
+			errs = append(errs, "download.self_hosted.public_base_url 必须是 http 或 https URL")
+		}
+		if c.Download.SelfHosted.ListenPort < 1 || c.Download.SelfHosted.ListenPort > 65535 {
+			errs = append(errs, "download.self_hosted.listen_port 必须在 1..65535 之间")
+		}
+	}
+	if c.Download.Mode == "s3" {
+		if !isHTTPURL(c.Download.S3.Endpoint) {
+			errs = append(errs, "download.s3.endpoint 必须是 http 或 https URL")
+		}
+		if strings.TrimSpace(c.Download.S3.Bucket) == "" {
+			errs = append(errs, "download.s3.bucket 不能为空")
+		}
+		if strings.TrimSpace(c.Download.S3.Region) == "" {
+			errs = append(errs, "download.s3.region 不能为空")
+		}
+		if strings.TrimSpace(c.Download.S3.AccessKey) == "" {
+			errs = append(errs, "download.s3.access_key 不能为空")
+		}
+		if strings.TrimSpace(c.Download.S3.SecretKey) == "" {
+			errs = append(errs, "download.s3.secret_key 不能为空")
+		}
+		if c.Download.S3.PresignExpiry.Std() <= 0 {
+			errs = append(errs, "download.s3.presign_expiry 必须为正")
+		}
+	}
 	if c.StateProtection.EncryptPasswordField && c.StateProtection.MasterPassphrase == "" {
 		errs = append(errs, "启用 state_protection.encrypt_password_field 时 master_passphrase 不能为空")
+	}
+	if c.Reliability.Healthcheck.Enabled {
+		if !isHTTPURL(c.Reliability.Healthcheck.PingURL) {
+			errs = append(errs, "reliability.healthcheck.ping_url 必须是 http 或 https URL")
+		}
+		if c.Reliability.Healthcheck.Interval.Std() <= 0 {
+			errs = append(errs, "reliability.healthcheck.interval 必须为正")
+		}
+		if c.Reliability.Healthcheck.Timeout.Std() <= 0 {
+			errs = append(errs, "reliability.healthcheck.timeout 必须为正")
+		}
+		if c.Reliability.Healthcheck.Timeout.Std() >= c.Reliability.Healthcheck.Interval.Std() {
+			errs = append(errs, "reliability.healthcheck.timeout 必须小于 interval")
+		}
+	}
+	if t, ok := c.Templates["zh"]; !ok {
+		errs = append(errs, "templates.zh 不能为空")
+	} else {
+		required := map[string]string{
+			"checkin_telegram":        t.CheckinTelegram,
+			"checkin_button_text":     t.CheckinButtonText,
+			"checkin_accepted_reply":  t.CheckinAcceptedReply,
+			"checkin_expired_reply":   t.CheckinExpiredReply,
+			"checkin_error_reply":     t.CheckinErrorReply,
+			"daily_reminder_telegram": t.DailyReminderTelegram,
+			"final_reminder_telegram": t.FinalReminderTelegram,
+			"warn_stage_telegram":     t.WarnStageTelegram,
+			"password_stage_telegram": t.PasswordStageTelegram,
+			"file_stage_telegram":     t.FileStageTelegram,
+			"cancel_flow_telegram":    t.CancelFlowTelegram,
+			"heartbeat_telegram":      t.HeartbeatTelegram,
+			"warn_email_subject":      t.WarnEmailSubject,
+			"warn_email_body":         t.WarnEmailBody,
+			"password_email_subject":  t.PasswordEmailSubject,
+			"password_email_body":     t.PasswordEmailBody,
+			"file_email_subject":      t.FileEmailSubject,
+			"file_email_body_link":    t.FileEmailBodyLink,
+		}
+		for name, value := range required {
+			if strings.TrimSpace(value) == "" {
+				errs = append(errs, fmt.Sprintf("templates.zh.%s 不能为空", name))
+			}
+		}
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("配置校验失败:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// ValidateRuntimePaths 检查依赖本机文件系统的路径。它和 Validate 分离，
+// 方便单元测试纯配置，也避免加载配置时创建目录。
+func (c *Config) ValidateRuntimePaths() error {
+	var errs []string
+	if err := requireReadableDir(c.SourceDir); err != nil {
+		errs = append(errs, fmt.Sprintf("source_dir 不可读: %v", err))
+	}
+	if err := requireWritableDir(c.StateDir); err != nil {
+		errs = append(errs, fmt.Sprintf("state_dir 不可写: %v", err))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("运行时路径校验失败:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
+func requireReadableDir(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("不是目录")
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	_ = entries
+	return nil
+}
+
+func requireWritableDir(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("不是目录")
+	}
+	probe, err := os.CreateTemp(path, ".ifgone-write-test-*")
+	if err != nil {
+		return err
+	}
+	name := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	return os.Remove(name)
+}
+
+func isEmail(value string) bool {
+	addr, err := mail.ParseAddress(value)
+	return err == nil && addr.Address == value
+}
+
+func isHTTPURL(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 // Lang 返回指定语言的模板，找不到时回退到 zh，再回退到任意一个。

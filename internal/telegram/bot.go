@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const apiBase = "https://api.telegram.org/bot"
+var apiBase = "https://api.telegram.org/bot"
 
 // Bot 封装 token、目标 chat_id 与 HTTP 客户端。
 type Bot struct {
@@ -44,10 +44,13 @@ func New(token string, chatID int64) *Bot {
 const callbackConfirmPrefix = "confirm:"
 
 // SendCheckin 发送一条带确认按钮的消息，按钮回调携带 token。
-func (b *Bot) SendCheckin(text, token string) error {
+func (b *Bot) SendCheckin(text, buttonText, token string) error {
+	if buttonText == "" {
+		buttonText = "确认正常"
+	}
 	keyboard := map[string]any{
 		"inline_keyboard": [][]map[string]string{{
-			{"text": "确认正常 / I'm OK", "callback_data": callbackConfirmPrefix + token},
+			{"text": buttonText, "callback_data": callbackConfirmPrefix + token},
 		}},
 	}
 	kbJSON, _ := json.Marshal(keyboard)

@@ -1,0 +1,27 @@
+# Git 与编辑器元数据
+.git
+.gitignore
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# 敏感运行配置与凭据
+.env
+.env.*
+config.yaml
+
+# 运行时数据与生成物
+data/
+*.db
+*.db-wal
+*.db-shm
+*.zip
+*.log
+ifgone
+bin/
+
+# 临时/缓存目录
+tmp/
+coverage/
+.code/supperpowers/

@@ -5,18 +5,27 @@
 source_dir: /data/source             # 挂载进容器、待打包加密的目录
 state_dir: /data/state               # state.db、加密包、日志的存放目录
 
+# 兼容旧配置字段：当前目标调度已使用 target_flow，以下 intervals 后续会清理或迁移。
 intervals:
-  pack_interval: 24h                 # 多久重新打包一次（每次换新随机密码）
-  checkin_interval: 24h              # 多久发一次 Telegram 确认（一个"回合"）
-  miss_threshold: 5                  # 连续漏几回合 → 进入最后强提醒（5×24h≈5天）
-  final_grace: 48h                   # 最后强提醒后再等多久才真正发预警邮件（关键防误判窗口）
-  password_delay: 72h                # 预警邮件 → 发解压密码（阶段1→2）
-  file_delay: 96h                    # 发密码 → 发压缩文件本体（阶段2→3）
+  pack_interval: 24h                 # 兼容旧字段：目标流程不再周期性提前打包
+  checkin_interval: 24h              # 兼容旧字段：目标流程改用 target_flow.checkin_day_of_month
+  miss_threshold: 5                  # 兼容旧字段：目标流程改用 target_flow.daily_reminder_days
+  final_grace: 48h                   # 兼容旧字段：目标流程连续提醒结束后直接进入受益人预提醒阶段
+  password_delay: 72h                # 兼容旧字段：未配置 target_flow.password_delay_after_warn 时作为默认来源
+  file_delay: 96h                    # 兼容旧字段：未配置 target_flow.file_delay_after_password 时作为默认来源
+
+# 目标流程配置：当前调度主流程读取这些字段。
+target_flow:
+  checkin_day_of_month: 1            # 每月几号发送安全确认
+  daily_reminder_days: 7             # 未确认后连续提醒几天
+  password_delay_after_warn: 72h     # 预提醒邮件成功后多久发送密码
+  file_delay_after_password: 168h    # 密码邮件成功后多久发送下载链接
+  timezone: Asia/Shanghai            # 月度确认日和预计发送日期展示时区
 
 archive:
   keep_archives: 3                   # 本地保留最近几个加密包
   password_length: 32                # 随机密码长度
-  large_file_threshold: 20MB         # 超过此大小走下载链接（迭代2），否则邮件附件
+  large_file_threshold: 20MB         # 兼容旧字段：目标流程不再按大小判断，统一发送下载链接
 
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN}   # 找 @BotFather 创建 bot 获取
@@ -33,17 +42,17 @@ smtp:
 
 beneficiaries:                       # 受益人（家人）列表
   - {name: "张三", email: zhangsan@example.com, lang: zh}
-  - {name: "Li Si", email: lisi@example.com,    lang: en}
+  - {name: "李四", email: lisi@example.com,     lang: zh}
 
 download:
-  mode: self_hosted                  # self_hosted | s3（s3 为迭代3）
+  mode: self_hosted                  # self_hosted | s3
   link_expiry: 336h                  # 下载链接有效期（14天）
   max_downloads: 5
   self_hosted:
     public_base_url: https://my-vps.example.com
     listen_port: 8080
   s3:
-    endpoint: https://s3.amazonaws.com
+    endpoint: https://s3.amazonaws.com # S3-compatible endpoint，如 MinIO/R2/OSS 兼容端点
     bucket: my-deadman-bucket
     region: us-east-1
     access_key: ${S3_ACCESS_KEY}
@@ -51,12 +60,17 @@ download:
     presign_expiry: 168h
 
 state_protection:
-  encrypt_password_field: false      # 迭代2：加密 state 里的包密码字段
+  encrypt_password_field: false      # true 时加密 state.db 中保存的归档密码
   master_passphrase: ${MASTER_PASSPHRASE}
 
 reliability:
   heartbeat_enabled: true
   heartbeat_interval: 168h           # 每 7 天给用户发一次"系统还活着"
+  healthcheck:
+    enabled: false                    # true 时定时访问第三方探活 ping URL
+    ping_url: ${HEALTHCHECK_PING_URL} # 例如 https://hc-ping.com/你的-uuid
+    interval: 10m
+    timeout: 10s
 
 logging:
   level: INFO
@@ -64,64 +78,62 @@ logging:
 
 templates:
   zh:
-    checkin_telegram: "定期安全确认：如果你一切正常，请点击下方按钮完成本轮确认。"
-    final_warning_telegram: "安全确认即将超时：系统已连续多轮未收到确认。若你一切正常，请尽快点击最新确认消息中的按钮，系统会暂停后续流程。"
+    checkin_telegram: "本月安全确认：如果你一切正常，请点击下方按钮完成确认。"
+    checkin_button_text: "确认正常"
+    checkin_accepted_reply: "本月已确认，祝君安康！"
+    checkin_expired_reply: "此确认已过期，请用最新的确认消息"
+    checkin_error_reply: "处理出错，请稍后再试"
+    daily_reminder_telegram: |
+      安全确认提醒：系统已<N>天没收到你的确认。
+      如果你一切正常，请点击最新确认消息中的“确认正常”按钮。
+    final_reminder_telegram: |
+      安全确认提醒：这是本轮连续提醒的最后一天。
+      如果你一切正常，请尽快点击最新确认消息中的“确认正常”按钮。若仍未确认，系统将进入预设通知流程。
+    warn_stage_telegram: |
+      阶段提醒：系统即将向受益人发送预提醒邮件。
+      如果你一切正常，请立即点击最新安全确认消息中的“确认正常”按钮，系统会暂停后续流程。
+    password_stage_telegram: |
+      阶段提醒：系统即将打包文件，并向受益人发送解压密码。
+      如果你一切正常，请立即点击最新安全确认消息中的“确认正常”按钮，系统会暂停后续流程。
+    file_stage_telegram: |
+      阶段提醒：系统即将向受益人发送加密文件下载链接。
+      如果你一切正常，请立即点击最新安全确认消息中的“确认正常”按钮，系统会暂停后续流程。
+    cancel_flow_telegram: "本月已确认，后续流程已暂停。"
+    heartbeat_telegram: "系统巡检正常：服务正在按计划运行。若长期收不到此消息，请检查服务器是否在线。"
     warn_email_subject: "[重要] 一封预定的信息"
     warn_email_body: |
       您好 {name}，
 
-      这是一封由 {owner} 预先设置的自动邮件。{owner} 设置了一套机制：若长期与系统失联，系统将向您传递重要信息。
+      这是一封由 {owner} 预先设置的自动邮件。{owner} 设置了一套机制：若他/她本人长期未完成安全确认，系统会按预设流程向您传递重要信息。
 
-      接下来：约 {password_days} 天后您会收到解压密码，约 {file_days} 天后会收到加密压缩文件。
-      （解压需使用 7-Zip 或 WinRAR，Windows 自带的解压不支持。）
+      目前系统已经连续多天未收到 {owner} 的安全确认。
 
-      若这是误发，{owner} 仍可随时取消，您可能不会再收到后续邮件。
+      如果接下来仍未收到 {owner} 的安全确认，系统将按配置继续执行：
+
+      - 预计在 {password_delay_text} 后即 {password_send_date} 给您发送重要文件的解压密码，请妥善保管。
+      - 预计在密码发送后 {file_delay_text} 即 {file_link_send_date} 给您发送加密文件下载链接，下载后可使用届时收到的密码解密。此日期为当前预估值，实际日期会在密码邮件中重新确认。
+
+      解压加密文件需要使用 7-Zip 或 WinRAR。Windows 自带解压工具通常不支持此类 AES 加密 ZIP。
+
+      若这是误触发，{owner} 仍可通过 Telegram 确认暂停后续流程，您可能不会再收到后续邮件。
     password_email_subject: "[重要] 解压密码"
     password_email_body: |
       您好 {name}，
 
-      解压密码为：{password}
+      这是此前预提醒邮件中提到的解压密码：
 
-      请妥善保存。稍后您会收到加密压缩文件，请用此密码并使用 7-Zip 或 WinRAR 解压。
-    file_email_subject: "[重要] 加密文件"
-    file_email_body_attach: |
-      您好 {name}，
+      {password}
 
-      加密文件见附件。请使用此前收到的密码，并用 7-Zip 或 WinRAR 解压。
+      请妥善保存。预计在 {file_delay_text} 后即 {file_link_send_date}，您会收到加密文件下载链接。下载文件后，请使用此密码并通过 7-Zip 或 WinRAR 解压。若不确定如何操作，请联系设置人预留的管理员或可信家人获取解压说明。
+    file_email_subject: "[重要] 加密文件下载链接"
     file_email_body_link: |
       您好 {name}，
 
-      文件较大，请通过以下链接下载（链接 {expiry} 内有效）：
+      请通过以下链接下载加密文件：
+
       {url}
-      请用此前收到的密码，并用 7-Zip 或 WinRAR 解压。
-  en:
-    checkin_telegram: "Regular safety check-in: if everything is okay, tap the button below to complete this round."
-    final_warning_telegram: "Safety check-in is about to time out: several rounds have passed without confirmation. If everything is okay, please tap the button in the latest check-in message to pause the follow-up flow."
-    warn_email_subject: "[Important] A pre-arranged message"
-    warn_email_body: |
-      Hello {name},
 
-      This is an automated email pre-arranged by {owner}. {owner} set up a system that delivers important information if they become unreachable for a long time.
+      链接有效期：{expiry}
+      最多下载次数：{max_downloads}
 
-      Next: you will receive the decryption password in about {password_days} days, and the encrypted archive in about {file_days} days.
-      (Extraction requires 7-Zip or WinRAR; the built-in Windows unzip does not support it.)
-
-      If this was sent in error, {owner} can still cancel it at any time.
-    password_email_subject: "[Important] Decryption password"
-    password_email_body: |
-      Hello {name},
-
-      The decryption password is: {password}
-
-      Please keep it safe. You will receive the encrypted archive shortly; use this password with 7-Zip or WinRAR to extract it.
-    file_email_subject: "[Important] Encrypted file"
-    file_email_body_attach: |
-      Hello {name},
-
-      The encrypted file is attached. Use the password you received earlier, with 7-Zip or WinRAR, to extract it.
-    file_email_body_link: |
-      Hello {name},
-
-      The file is large; please download it via this link (valid for {expiry}):
-      {url}
-      Use the password you received earlier, with 7-Zip or WinRAR, to extract it.
+      请使用此前收到的解压密码，并通过 7-Zip 或 WinRAR 解压。若不确定如何操作，请联系设置人预留的管理员或可信家人获取解压说明。

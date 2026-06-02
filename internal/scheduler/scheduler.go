@@ -9,10 +9,10 @@ package scheduler
 
 import (
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/ofilm/if-i-am-gone/internal/config"
+	"github.com/ofilm/if-i-am-gone/internal/secretbox"
 	"github.com/ofilm/if-i-am-gone/internal/state"
 )
 
@@ -20,17 +20,17 @@ import (
 type Notifier interface {
 	// SendCheckin 发送带确认按钮的 Telegram 消息（携带一次性 token）。
 	SendCheckin(token string) error
-	// SendFinalWarning 发送高优先级的最后强提醒（Telegram）。
-	SendFinalWarning() error
+	// SendDailyReminder 发送连续提醒阶段的 Telegram 提醒。
+	SendDailyReminder(day int, isLast bool) error
+	// SendStageReminder 在每个受益人邮件阶段前提醒用户本人。
+	SendStageReminder(stage state.Stage) error
 	// SendHeartbeat 发送服务巡检心跳（Telegram）。
 	SendHeartbeat() error
 	// SendMessageSafe 发送一条任意文本 Telegram 消息（如取消通知）。
 	SendMessageSafe(text string) error
-	// SendOwnerAlert 在进入触发预备时给用户本人发邮件（多通道兜底）。
-	SendOwnerAlert() error
 	// DeliverWarn/Password/File 分别给单个受益人投递三阶段邮件。
-	DeliverWarn(b config.Beneficiary) error
-	DeliverPassword(b config.Beneficiary, password string) error
+	DeliverWarn(b config.Beneficiary, passwordSendDate, fileLinkSendDate time.Time) error
+	DeliverPassword(b config.Beneficiary, password string, fileLinkSendDate time.Time) error
 	DeliverFile(b config.Beneficiary, archivePath, password string) error
 }
 
@@ -90,10 +90,17 @@ func (s *Scheduler) Confirm(now time.Time, token string) (accepted bool, err err
 	}
 	// 取消触发流程后清空投递记录，下次真触发重新走完整流程。
 	if wasTriggering {
+		st.CurrentArchivePath = ""
+		st.CurrentArchivePassword = ""
+		st.CurrentArchiveSHA256 = ""
+		st.LastPackAt = nil
+		if err := s.store.Save(st); err != nil {
+			return false, err
+		}
 		if err := s.store.ClearDeliveries(); err != nil {
 			return false, err
 		}
-		_ = s.notifier.SendMessageSafe("已收到本轮确认，后续流程已暂停。")
+		_ = s.notifier.SendMessageSafe("")
 	}
 	_ = s.store.Audit("user_confirmed", fmt.Sprintf("from_phase_triggering=%v", wasTriggering), now)
 	s.logf("用户已确认，状态重置为 ALIVE（之前处于触发流程=%v）", wasTriggering)
@@ -105,15 +112,6 @@ func (s *Scheduler) Tick(now time.Time) error {
 	st, err := s.store.Load()
 	if err != nil {
 		return err
-	}
-
-	// --- 公共：到打包周期就重新打包（任何活跃态都保持最新加密包+密码） ---
-	if s.due(st.LastPackAt, s.cfg.Intervals.PackInterval.Std(), now) && !isTerminal(st.Phase) {
-		if err := s.doPack(st, now); err != nil {
-			// 打包失败不阻断后续判定，记录后继续。
-			s.logf("打包失败: %v", err)
-			_ = s.store.Audit("pack_failed", err.Error(), now)
-		}
 	}
 
 	switch st.Phase {
@@ -132,10 +130,11 @@ func (s *Scheduler) Tick(now time.Time) error {
 }
 
 func (s *Scheduler) tickAlive(st *state.State, now time.Time) error {
-	ci := s.cfg.Intervals.CheckinInterval.Std()
+	if hasOutstandingCheckin(st) {
+		return s.tickOutstandingCheckin(st, now)
+	}
 
-	// 1) 该不该发确认消息
-	if s.due(st.LastCheckinSentAt, ci, now) {
+	if shouldSendMonthlyCheckin(st.LastCheckinSentAt, s.cfg.TargetFlow, now) {
 		token, err := s.tokenGen()
 		if err != nil {
 			return err
@@ -147,28 +146,44 @@ func (s *Scheduler) tickAlive(st *state.State, now time.Time) error {
 		} else {
 			st.PendingToken = token
 			st.LastCheckinSentAt = ptr(now)
+			st.MissCount = 0
 			_ = s.store.Audit("checkin_sent", "", now)
 		}
 	}
 
-	// 2) 漏回合数 = 纯函数（抗宕机关键）
-	missed := missedRounds(st.LastConfirmedAt, ci, now)
-	st.MissCount = missed
-	if missed >= 1 && st.Phase == state.PhaseAlive {
-		st.Phase = state.PhaseGrace
-		s.logf("进入 GRACE：已漏 %d 回合", missed)
+	s.maybeHeartbeat(st, now)
+	return s.store.Save(st)
+}
+
+func (s *Scheduler) tickOutstandingCheckin(st *state.State, now time.Time) error {
+	days := reminderDaysSince(*st.LastCheckinSentAt, now)
+	if days < 1 {
+		s.maybeHeartbeat(st, now)
+		return s.store.Save(st)
 	}
 
-	// 3) 达阈值 → 最后强提醒 + 进入触发预备
-	if missed >= s.cfg.Intervals.MissThreshold {
-		if err := s.notifier.SendFinalWarning(); err != nil {
-			s.logf("发送最后强提醒失败: %v", err)
+	if st.Phase == state.PhaseAlive {
+		st.Phase = state.PhaseGrace
+		s.logf("进入 GRACE：本月确认已漏 %d 天", days)
+	}
+
+	if days <= s.cfg.TargetFlow.DailyReminderDays {
+		if st.MissCount < days {
+			isLast := days == s.cfg.TargetFlow.DailyReminderDays
+			if err := s.notifier.SendDailyReminder(days, isLast); err != nil {
+				s.logf("发送连续提醒失败: %v", err)
+				_ = s.store.Audit("daily_reminder_failed", err.Error(), now)
+			} else {
+				st.MissCount = days
+				_ = s.store.Audit("daily_reminder_sent", fmt.Sprintf("day=%d,last=%v", days, isLast), now)
+			}
 		}
-		_ = s.notifier.SendOwnerAlert() // 多通道兜底，失败忽略
+	} else {
 		st.Phase = state.PhasePendingTrigger
+		st.MissCount = days
 		st.FinalWarningAt = ptr(now)
-		_ = s.store.Audit("entered_pending_trigger", fmt.Sprintf("missed=%d", missed), now)
-		s.logf("漏回合达阈值 %d，进入 PENDING_TRIGGER", s.cfg.Intervals.MissThreshold)
+		_ = s.store.Audit("entered_pending_trigger", fmt.Sprintf("reminder_days=%d", days), now)
+		s.logf("连续提醒期已结束，进入 PENDING_TRIGGER")
 	}
 
 	s.maybeHeartbeat(st, now)
@@ -176,35 +191,58 @@ func (s *Scheduler) tickAlive(st *state.State, now time.Time) error {
 }
 
 func (s *Scheduler) tickPendingTrigger(st *state.State, now time.Time) error {
-	if s.due(st.FinalWarningAt, s.cfg.Intervals.FinalGrace.Std(), now) {
-		allDelivered := true
-		for _, b := range s.cfg.Beneficiaries {
-			if !s.deliver(b.Email, state.StageWarn, now, func() error {
-				return s.notifier.DeliverWarn(b)
-			}) {
-				allDelivered = false
-			}
-		}
-		if !allDelivered {
-			_ = s.store.Audit("warn_delivery_waiting_retry", "部分预警邮件投递失败，暂不推进阶段", now)
-			s.logf("部分预警邮件投递失败，保持 PENDING_TRIGGER 等待重试")
-			return s.store.Save(st)
-		}
-		st.Phase = state.PhaseWarned
-		st.WarnedAt = ptr(now)
-		_ = s.store.Audit("entered_warned", "预警邮件已发", now)
-		s.logf("进入 WARNED：预警邮件已发给受益人")
+	if st.FinalWarningAt == nil {
+		st.FinalWarningAt = ptr(now)
 	}
+	if !s.deliverOwnerStageReminder(state.StageWarnTelegram, state.StageWarn, now) {
+		return s.store.Save(st)
+	}
+
+	passwordSendDate := now.Add(s.cfg.TargetFlow.PasswordDelayAfterWarn.Std())
+	fileLinkSendDate := passwordSendDate.Add(s.cfg.TargetFlow.FileDelayAfterPassword.Std())
+	allDelivered := true
+	for _, b := range s.cfg.Beneficiaries {
+		if !s.deliver(b.Email, state.StageWarn, now, func() error {
+			return s.notifier.DeliverWarn(b, passwordSendDate, fileLinkSendDate)
+		}) {
+			allDelivered = false
+		}
+	}
+	if !allDelivered {
+		_ = s.store.Audit("warn_delivery_waiting_retry", "部分预提醒邮件投递失败，暂不推进阶段", now)
+		s.logf("部分预提醒邮件投递失败，保持 PENDING_TRIGGER 等待重试")
+		return s.store.Save(st)
+	}
+	st.Phase = state.PhaseWarned
+	st.WarnedAt = ptr(now)
+	_ = s.store.Audit("entered_warned", "预提醒邮件已发", now)
+	s.logf("进入 WARNED：预提醒邮件已发给受益人")
 	return s.store.Save(st)
 }
 
 func (s *Scheduler) tickWarned(st *state.State, now time.Time) error {
-	if s.due(st.WarnedAt, s.cfg.Intervals.PasswordDelay.Std(), now) {
-		password := st.CurrentArchivePassword // 迭代2 起这里可能是加密的，由 notifier 层解密
+	if s.due(st.WarnedAt, s.cfg.TargetFlow.PasswordDelayAfterWarn.Std(), now) {
+		if !s.deliverOwnerStageReminder(state.StagePasswordTelegram, state.StagePassword, now) {
+			return s.store.Save(st)
+		}
+		if st.CurrentArchivePath == "" || st.CurrentArchivePassword == "" {
+			if err := s.doPack(st, now); err != nil {
+				s.logf("密码阶段打包失败: %v", err)
+				_ = s.store.Audit("pack_failed", err.Error(), now)
+				return s.store.Save(st)
+			}
+		}
+		password, err := s.archivePassword(st)
+		if err != nil {
+			s.logf("读取归档密码失败: %v", err)
+			_ = s.store.Audit("archive_password_read_failed", err.Error(), now)
+			return s.store.Save(st)
+		}
+		fileLinkSendDate := now.Add(s.cfg.TargetFlow.FileDelayAfterPassword.Std())
 		allDelivered := true
 		for _, b := range s.cfg.Beneficiaries {
 			if !s.deliver(b.Email, state.StagePassword, now, func() error {
-				return s.notifier.DeliverPassword(b, password)
+				return s.notifier.DeliverPassword(b, password, fileLinkSendDate)
 			}) {
 				allDelivered = false
 			}
@@ -223,11 +261,18 @@ func (s *Scheduler) tickWarned(st *state.State, now time.Time) error {
 }
 
 func (s *Scheduler) tickPasswordSent(st *state.State, now time.Time) error {
-	if s.due(st.PasswordSentAt, s.cfg.Intervals.FileDelay.Std(), now) {
+	if s.due(st.PasswordSentAt, s.cfg.TargetFlow.FileDelayAfterPassword.Std(), now) {
+		if !s.deliverOwnerStageReminder(state.StageFileTelegram, state.StageFile, now) {
+			return s.store.Save(st)
+		}
 		allDelivered := true
 		for _, b := range s.cfg.Beneficiaries {
 			if !s.deliver(b.Email, state.StageFile, now, func() error {
-				return s.notifier.DeliverFile(b, st.CurrentArchivePath, st.CurrentArchivePassword)
+				password, err := s.archivePassword(st)
+				if err != nil {
+					return err
+				}
+				return s.notifier.DeliverFile(b, st.CurrentArchivePath, password)
 			}) {
 				allDelivered = false
 			}
@@ -239,8 +284,8 @@ func (s *Scheduler) tickPasswordSent(st *state.State, now time.Time) error {
 		}
 		st.Phase = state.PhaseFileSent
 		st.FileSentAt = ptr(now)
-		_ = s.store.Audit("entered_file_sent", "压缩文件已发", now)
-		s.logf("进入 FILE_SENT：压缩文件已发给受益人")
+		_ = s.store.Audit("entered_file_sent", "下载链接已发", now)
+		s.logf("进入 FILE_SENT：下载链接已发给受益人")
 	}
 	return s.store.Save(st)
 }
@@ -281,6 +326,12 @@ func (s *Scheduler) deliver(email string, stage state.Stage, now time.Time, fn f
 	return true
 }
 
+func (s *Scheduler) deliverOwnerStageReminder(recordStage, flowStage state.Stage, now time.Time) bool {
+	return s.deliver("__owner_telegram__", recordStage, now, func() error {
+		return s.notifier.SendStageReminder(flowStage)
+	})
+}
+
 func (s *Scheduler) doPack(st *state.State, now time.Time) error {
 	path, sha, pwd, err := s.packer.Pack(now)
 	if err != nil {
@@ -289,10 +340,27 @@ func (s *Scheduler) doPack(st *state.State, now time.Time) error {
 	st.CurrentArchivePath = path
 	st.CurrentArchiveSHA256 = sha
 	st.CurrentArchivePassword = pwd
+	if s.cfg.StateProtection.EncryptPasswordField {
+		encrypted, err := secretbox.Encrypt(pwd, s.cfg.StateProtection.MasterPassphrase)
+		if err != nil {
+			return err
+		}
+		st.CurrentArchivePassword = encrypted
+	}
 	st.LastPackAt = ptr(now)
 	_ = s.store.Audit("packed", sha, now)
 	s.logf("已打包: %s (sha256=%s)", path, sha)
 	return nil
+}
+
+func (s *Scheduler) archivePassword(st *state.State) (string, error) {
+	if st.CurrentArchivePassword == "" {
+		return "", fmt.Errorf("当前归档密码为空")
+	}
+	if !s.cfg.StateProtection.EncryptPasswordField {
+		return st.CurrentArchivePassword, nil
+	}
+	return secretbox.Decrypt(st.CurrentArchivePassword, s.cfg.StateProtection.MasterPassphrase)
 }
 
 func (s *Scheduler) maybeHeartbeat(st *state.State, now time.Time) {
@@ -318,19 +386,6 @@ func (s *Scheduler) due(t *time.Time, interval time.Duration, now time.Time) boo
 	return now.Sub(*t) >= interval
 }
 
-// missedRounds = floor((now - lastConfirmed) / checkinInterval)。
-// 这是抗宕机的核心：纯由时间戳推导，与进程是否连续运行无关。
-func missedRounds(lastConfirmed *time.Time, interval time.Duration, now time.Time) int {
-	if lastConfirmed == nil || interval <= 0 {
-		return 0
-	}
-	elapsed := now.Sub(*lastConfirmed)
-	if elapsed < interval {
-		return 0
-	}
-	return int(math.Floor(float64(elapsed) / float64(interval)))
-}
-
 func isTerminal(p state.Phase) bool {
 	return p == state.PhaseFileSent || p == state.PhaseCompleted
 }
@@ -338,4 +393,52 @@ func isTerminal(p state.Phase) bool {
 func ptr(t time.Time) *time.Time {
 	tt := t.UTC()
 	return &tt
+}
+
+func shouldSendMonthlyCheckin(lastSent *time.Time, flow config.TargetFlow, now time.Time) bool {
+	loc := loadLocation(flow.Timezone)
+	current := monthlyCheckinTime(now, flow.CheckinDayOfMonth, loc)
+	if now.Before(current) {
+		return false
+	}
+	if lastSent == nil {
+		return true
+	}
+	return lastSent.Before(current)
+}
+
+func hasOutstandingCheckin(st *state.State) bool {
+	if st.LastCheckinSentAt == nil || st.PendingToken == "" {
+		return false
+	}
+	return st.LastConfirmedAt == nil || st.LastConfirmedAt.Before(*st.LastCheckinSentAt)
+}
+
+func monthlyCheckinTime(now time.Time, day int, loc *time.Location) time.Time {
+	local := now.In(loc)
+	y, m, _ := local.Date()
+	maxDay := daysInMonth(y, m)
+	if day > maxDay {
+		day = maxDay
+	}
+	return time.Date(y, m, day, 0, 0, 0, 0, loc).UTC()
+}
+
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+func reminderDaysSince(checkinSentAt time.Time, now time.Time) int {
+	if now.Before(checkinSentAt.Add(24 * time.Hour)) {
+		return 0
+	}
+	return int(now.Sub(checkinSentAt) / (24 * time.Hour))
+}
+
+func loadLocation(name string) *time.Location {
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.Local
+	}
+	return loc
 }

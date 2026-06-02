@@ -4,14 +4,15 @@ package templates
 
 import "strings"
 
-// Render 把 text 中所有 {key} 替换为 vars[key]。未提供的占位符原样保留。
+// Render 把 text 中所有 {key} 与 <key> 替换为 vars[key]。未提供的占位符原样保留。
 func Render(text string, vars map[string]string) string {
 	if len(vars) == 0 {
 		return text
 	}
-	pairs := make([]string, 0, len(vars)*2)
+	pairs := make([]string, 0, len(vars)*4)
 	for k, v := range vars {
 		pairs = append(pairs, "{"+k+"}", v)
+		pairs = append(pairs, "<"+k+">", v)
 	}
 	return strings.NewReplacer(pairs...).Replace(text)
 }

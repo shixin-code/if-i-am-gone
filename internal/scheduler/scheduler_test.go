@@ -15,44 +15,53 @@ import (
 
 // fakeNotifier 记录每种通知/投递发生了多少次。
 type fakeNotifier struct {
-	checkins      int
-	finalWarnings int
-	heartbeats    int
-	messages      int
-	ownerAlerts   int
-	warnSent      map[string]int
-	passwordSent  map[string]int
-	fileSent      map[string]int
-	failWarn      map[string]bool
-	failPassword  map[string]bool
-	failFile      map[string]bool
-	lastPassword  string
+	checkins             int
+	dailyReminders       []int
+	lastReminderWasFinal bool
+	stageReminders       map[state.Stage]int
+	heartbeats           int
+	messages             int
+	warnSent             map[string]int
+	passwordSent         map[string]int
+	fileSent             map[string]int
+	failWarn             map[string]bool
+	failPassword         map[string]bool
+	failFile             map[string]bool
+	lastPassword         string
 }
 
 func newFakeNotifier() *fakeNotifier {
 	return &fakeNotifier{
-		warnSent:     map[string]int{},
-		passwordSent: map[string]int{},
-		fileSent:     map[string]int{},
-		failWarn:     map[string]bool{},
-		failPassword: map[string]bool{},
-		failFile:     map[string]bool{},
+		warnSent:       map[string]int{},
+		passwordSent:   map[string]int{},
+		fileSent:       map[string]int{},
+		stageReminders: map[state.Stage]int{},
+		failWarn:       map[string]bool{},
+		failPassword:   map[string]bool{},
+		failFile:       map[string]bool{},
 	}
 }
 
-func (f *fakeNotifier) SendCheckin(token string) error    { f.checkins++; return nil }
-func (f *fakeNotifier) SendFinalWarning() error           { f.finalWarnings++; return nil }
+func (f *fakeNotifier) SendCheckin(token string) error { f.checkins++; return nil }
+func (f *fakeNotifier) SendDailyReminder(day int, isLast bool) error {
+	f.dailyReminders = append(f.dailyReminders, day)
+	f.lastReminderWasFinal = isLast
+	return nil
+}
+func (f *fakeNotifier) SendStageReminder(stage state.Stage) error {
+	f.stageReminders[stage]++
+	return nil
+}
 func (f *fakeNotifier) SendHeartbeat() error              { f.heartbeats++; return nil }
 func (f *fakeNotifier) SendMessageSafe(text string) error { f.messages++; return nil }
-func (f *fakeNotifier) SendOwnerAlert() error             { f.ownerAlerts++; return nil }
-func (f *fakeNotifier) DeliverWarn(b config.Beneficiary) error {
+func (f *fakeNotifier) DeliverWarn(b config.Beneficiary, passwordSendDate, fileLinkSendDate time.Time) error {
 	f.warnSent[b.Email]++
 	if f.failWarn[b.Email] {
 		return errors.New("warn delivery failed")
 	}
 	return nil
 }
-func (f *fakeNotifier) DeliverPassword(b config.Beneficiary, password string) error {
+func (f *fakeNotifier) DeliverPassword(b config.Beneficiary, password string, fileLinkSendDate time.Time) error {
 	f.passwordSent[b.Email]++
 	if f.failPassword[b.Email] {
 		return errors.New("password delivery failed")
@@ -97,10 +106,17 @@ func newTestScheduler(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier, *f
 			PasswordDelay:   config.Duration(72 * time.Hour),
 			FileDelay:       config.Duration(96 * time.Hour),
 		},
+		TargetFlow: config.TargetFlow{
+			CheckinDayOfMonth:      1,
+			DailyReminderDays:      7,
+			PasswordDelayAfterWarn: config.Duration(72 * time.Hour),
+			FileDelayAfterPassword: config.Duration(96 * time.Hour),
+			Timezone:               "UTC",
+		},
 		Archive: config.Archive{KeepArchives: 3, PasswordLength: 32, LargeFileThreshold: config.Bytes(20 << 20)},
 		Beneficiaries: []config.Beneficiary{
 			{Name: "A", Email: "a@example.com", Lang: "zh"},
-			{Name: "B", Email: "b@example.com", Lang: "en"},
+			{Name: "B", Email: "b@example.com", Lang: "zh"},
 		},
 		Reliability: config.Reliability{HeartbeatEnabled: true, HeartbeatInterval: config.Duration(168 * time.Hour)},
 	}
@@ -132,8 +148,8 @@ func TestConfirmResetsToAlive(t *testing.T) {
 	s, store, _, _ := newTestScheduler(t)
 	setConfirmed(t, store, base)
 
-	// 推进到该发确认消息，tick 设置 pending_token。
-	if err := s.Tick(base.Add(25 * time.Hour)); err != nil {
+	// 月度确认日 tick 设置 pending_token。
+	if err := s.Tick(base); err != nil {
 		t.Fatal(err)
 	}
 	st, _ := store.Load()
@@ -141,7 +157,7 @@ func TestConfirmResetsToAlive(t *testing.T) {
 		t.Fatal("期望 tick 设置 pending_token")
 	}
 
-	accepted, err := s.Confirm(base.Add(26*time.Hour), st.PendingToken)
+	accepted, err := s.Confirm(base.Add(time.Hour), st.PendingToken)
 	if err != nil || !accepted {
 		t.Fatalf("确认应被接受, accepted=%v err=%v", accepted, err)
 	}
@@ -151,11 +167,32 @@ func TestConfirmResetsToAlive(t *testing.T) {
 	}
 }
 
+func TestConfirmDoesNotRepeatMonthlyCheckinInSameMonth(t *testing.T) {
+	s, store, n, _ := newTestScheduler(t)
+	setConfirmed(t, store, base.Add(-time.Hour))
+
+	if err := s.Tick(base); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Load()
+	accepted, err := s.Confirm(base.Add(time.Hour), st.PendingToken)
+	if err != nil || !accepted {
+		t.Fatalf("确认应被接受, accepted=%v err=%v", accepted, err)
+	}
+
+	if err := s.Tick(base.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if n.checkins != 1 {
+		t.Fatalf("同月确认后不应重复发送确认消息，实际 %d", n.checkins)
+	}
+}
+
 // 错误 token 不应被接受（防重放）。
 func TestConfirmWrongTokenRejected(t *testing.T) {
 	s, store, _, _ := newTestScheduler(t)
 	setConfirmed(t, store, base)
-	_ = s.Tick(base.Add(25 * time.Hour))
+	_ = s.Tick(base)
 
 	accepted, err := s.Confirm(base.Add(26*time.Hour), "wrong-token")
 	if err != nil {
@@ -166,29 +203,62 @@ func TestConfirmWrongTokenRejected(t *testing.T) {
 	}
 }
 
-// 连续漏回合应进入 GRACE，再达阈值进入 PENDING_TRIGGER。
-func TestMissedRoundsProgression(t *testing.T) {
+// 月度确认未点击时，应先进入连续提醒，再在提醒期结束后进入 PENDING_TRIGGER。
+func TestMonthlyReminderProgression(t *testing.T) {
 	s, store, n, _ := newTestScheduler(t)
-	setConfirmed(t, store, base)
+	setConfirmed(t, store, base.Add(-time.Hour))
 
-	// 漏 1 回合 → GRACE
-	_ = s.Tick(base.Add(25 * time.Hour))
+	_ = s.Tick(base)
+	if n.checkins != 1 {
+		t.Fatalf("确认日应发送本月确认，实际 %d", n.checkins)
+	}
+
+	// D1 → GRACE + 第 1 天提醒
+	_ = s.Tick(base.Add(24 * time.Hour))
 	st, _ := store.Load()
 	if st.Phase != state.PhaseGrace {
-		t.Fatalf("漏 1 回合应为 GRACE，实际 %s", st.Phase)
+		t.Fatalf("D1 应为 GRACE，实际 %s", st.Phase)
+	}
+	if len(n.dailyReminders) != 1 || n.dailyReminders[0] != 1 {
+		t.Fatalf("D1 应发送第 1 天提醒，实际 %+v", n.dailyReminders)
 	}
 
-	// 漏 5 回合 → PENDING_TRIGGER + 最后强提醒
-	_ = s.Tick(base.Add(5*24*time.Hour + time.Hour))
+	// D7 → 最后一天提醒
+	_ = s.Tick(base.Add(7 * 24 * time.Hour))
+	if !n.lastReminderWasFinal {
+		t.Fatal("D7 应发送最后连续提醒文案")
+	}
+
+	// D8 → PENDING_TRIGGER
+	_ = s.Tick(base.Add(8*24*time.Hour + time.Minute))
 	st, _ = store.Load()
 	if st.Phase != state.PhasePendingTrigger {
-		t.Fatalf("漏 5 回合应为 PENDING_TRIGGER，实际 %s", st.Phase)
+		t.Fatalf("连续提醒结束后应为 PENDING_TRIGGER，实际 %s", st.Phase)
 	}
-	if n.finalWarnings == 0 {
-		t.Fatal("应发送最后强提醒")
+}
+
+func TestDowntimeDoesNotOverwriteOutstandingCheckin(t *testing.T) {
+	s, store, n, _ := newTestScheduler(t)
+	setConfirmed(t, store, base.Add(-time.Hour))
+
+	_ = s.Tick(base)
+	st, _ := store.Load()
+	firstToken := st.PendingToken
+	if firstToken == "" {
+		t.Fatal("D0 应生成 pending token")
 	}
-	if n.ownerAlerts == 0 {
-		t.Fatal("应给用户本人发兜底邮件")
+
+	// 模拟错过整段连续提醒甚至跨到下个月：不能覆盖旧 token 重新开始一轮。
+	_ = s.Tick(base.Add(40 * 24 * time.Hour))
+	st, _ = store.Load()
+	if st.PendingToken != firstToken {
+		t.Fatal("未确认的旧 token 不应被新月确认覆盖")
+	}
+	if st.Phase != state.PhasePendingTrigger {
+		t.Fatalf("跨月恢复时应按旧确认补推进到 PENDING_TRIGGER，实际 %s", st.Phase)
+	}
+	if n.checkins != 1 {
+		t.Fatalf("不应发送新的月度确认覆盖旧流程，实际 %d", n.checkins)
 	}
 }
 
@@ -198,33 +268,36 @@ func TestMissedRoundsProgression(t *testing.T) {
 // 所以推进各阶段时需让时钟越过对应窗口。最后验证投递幂等。
 func TestDowntimeReplay(t *testing.T) {
 	s, store, n, _ := newTestScheduler(t)
-	setConfirmed(t, store, base)
+	setConfirmed(t, store, base.Add(-time.Hour))
 
-	// 模拟 VPS 宕机很久：直接跳到 base + 30 天后才跑第一拍。
-	// 漏回合远超阈值 5 → 单拍即进入 PENDING_TRIGGER，并记 final_warning_at=now。
-	tNow := base.Add(30 * 24 * time.Hour)
-
-	// 第1拍：ALIVE → PENDING_TRIGGER
+	tNow := base
+	// D0：发送本月确认。
+	_ = s.Tick(tNow)
+	// D8：连续提醒期已过，进入 PENDING_TRIGGER。
+	tNow = tNow.Add(8*24*time.Hour + time.Minute)
 	_ = s.Tick(tNow)
 	if st, _ := store.Load(); st.Phase != state.PhasePendingTrigger {
-		t.Fatalf("第1拍应到 PENDING_TRIGGER，实际 %s", st.Phase)
+		t.Fatalf("应到 PENDING_TRIGGER，实际 %s", st.Phase)
 	}
 
-	// 越过 final_grace(48h)：PENDING_TRIGGER → WARNED
-	tNow = tNow.Add(49 * time.Hour)
+	// PENDING_TRIGGER → WARNED，先发 Telegram 阶段提醒，再发受益人预提醒邮件。
+	tNow = tNow.Add(time.Minute)
 	_ = s.Tick(tNow)
 	if st, _ := store.Load(); st.Phase != state.PhaseWarned {
-		t.Fatalf("越过 final_grace 后应到 WARNED，实际 %s", st.Phase)
+		t.Fatalf("应到 WARNED，实际 %s", st.Phase)
+	}
+	if n.stageReminders[state.StageWarn] != 1 {
+		t.Fatalf("应发送预提醒阶段 Telegram 提醒，实际 %d", n.stageReminders[state.StageWarn])
 	}
 
-	// 越过 password_delay(72h)：WARNED → PASSWORD_SENT
+	// 越过 password_delay_after_warn(72h)：WARNED → PASSWORD_SENT，并在此刻才打包。
 	tNow = tNow.Add(73 * time.Hour)
 	_ = s.Tick(tNow)
 	if st, _ := store.Load(); st.Phase != state.PhasePasswordSent {
 		t.Fatalf("越过 password_delay 后应到 PASSWORD_SENT，实际 %s", st.Phase)
 	}
 
-	// 越过 file_delay(96h)：PASSWORD_SENT → FILE_SENT
+	// 越过 file_delay_after_password(96h)：PASSWORD_SENT → FILE_SENT
 	tNow = tNow.Add(97 * time.Hour)
 	_ = s.Tick(tNow)
 	if st, _ := store.Load(); st.Phase != state.PhaseFileSent {
@@ -254,11 +327,13 @@ func TestDowntimeReplay(t *testing.T) {
 // 阶段内有受益人投递失败时，状态不能推进；下一拍只重试失败项，全部成功后再推进。
 func TestStageWaitsForFailedDeliveriesBeforeProgressing(t *testing.T) {
 	s, store, n, _ := newTestScheduler(t)
-	setConfirmed(t, store, base)
+	setConfirmed(t, store, base.Add(-time.Hour))
 
-	tNow := base.Add(30 * 24 * time.Hour)
+	tNow := base
+	_ = s.Tick(tNow)
+	tNow = tNow.Add(8*24*time.Hour + time.Minute)
 	_ = s.Tick(tNow) // → PENDING_TRIGGER
-	tNow = tNow.Add(49 * time.Hour)
+	tNow = tNow.Add(time.Minute)
 
 	n.failWarn["b@example.com"] = true
 	if err := s.Tick(tNow); err != nil {
@@ -291,13 +366,15 @@ func TestStageWaitsForFailedDeliveriesBeforeProgressing(t *testing.T) {
 // 触发流程中任意阶段确认应立即取消，回到 ALIVE，后续不再投递。
 func TestConfirmDuringTriggerCancels(t *testing.T) {
 	s, store, n, _ := newTestScheduler(t)
-	setConfirmed(t, store, base)
-	tNow := base.Add(30 * 24 * time.Hour)
+	setConfirmed(t, store, base.Add(-time.Hour))
+	tNow := base
 
-	// 推进到 WARNED：先进 PENDING_TRIGGER，再越过 final_grace。
-	_ = s.Tick(tNow)                // → PENDING_TRIGGER（记 final_warning_at）
-	tNow = tNow.Add(49 * time.Hour) // 越过 final_grace(48h)
-	_ = s.Tick(tNow)                // → WARNED
+	// 推进到 WARNED：先发送确认，再进入 PENDING_TRIGGER，随后发预提醒。
+	_ = s.Tick(tNow)
+	tNow = tNow.Add(8*24*time.Hour + time.Minute)
+	_ = s.Tick(tNow) // → PENDING_TRIGGER
+	tNow = tNow.Add(time.Minute)
+	_ = s.Tick(tNow) // → WARNED
 	st, _ := store.Load()
 	if st.Phase != state.PhaseWarned {
 		t.Fatalf("应处于 WARNED，实际 %s", st.Phase)
@@ -327,44 +404,99 @@ func TestConfirmDuringTriggerCancels(t *testing.T) {
 	}
 }
 
-// 终态机器人不应再打包。
-func TestNoPackInTerminal(t *testing.T) {
-	s, store, _, p := newTestScheduler(t)
-	st, _ := store.Load()
-	st.Phase = state.PhaseCompleted
-	_ = store.Save(st)
+func TestConfirmDuringTriggerClearsArchiveForNextTrigger(t *testing.T) {
+	s, store, _, _ := newTestScheduler(t)
+	setConfirmed(t, store, base.Add(-time.Hour))
 
-	packsBefore := p.packs
-	_ = s.Tick(base.Add(48 * time.Hour))
-	if p.packs != packsBefore {
-		t.Fatal("终态不应打包")
+	tNow := base
+	_ = s.Tick(tNow)
+	tNow = tNow.Add(8*24*time.Hour + time.Minute)
+	_ = s.Tick(tNow) // → PENDING_TRIGGER
+	tNow = tNow.Add(time.Minute)
+	_ = s.Tick(tNow) // → WARNED
+	tNow = tNow.Add(73 * time.Hour)
+	_ = s.Tick(tNow) // → PASSWORD_SENT，已打包
+
+	st, _ := store.Load()
+	if st.CurrentArchivePath == "" {
+		t.Fatal("密码阶段应已生成归档")
+	}
+	accepted, err := s.Confirm(tNow.Add(time.Minute), st.PendingToken)
+	if err != nil || !accepted {
+		t.Fatalf("确认应被接受, accepted=%v err=%v", accepted, err)
+	}
+	st, _ = store.Load()
+	if st.CurrentArchivePath != "" || st.CurrentArchivePassword != "" || st.CurrentArchiveSHA256 != "" || st.LastPackAt != nil {
+		t.Fatalf("取消触发后应清理本轮归档状态: %+v", st)
 	}
 }
 
-// missedRounds 纯函数边界。
-func TestMissedRounds(t *testing.T) {
-	last := base
-	ci := 24 * time.Hour
-	cases := []struct {
-		elapsed time.Duration
-		want    int
-	}{
-		{0, 0},
-		{23 * time.Hour, 0},
-		{24 * time.Hour, 1},
-		{25 * time.Hour, 1},
-		{48 * time.Hour, 2},
-		{5 * 24 * time.Hour, 5},
-		{30 * 24 * time.Hour, 30},
+func TestEncryptedArchivePasswordStoredButDeliveredPlaintext(t *testing.T) {
+	s, store, n, _ := newTestScheduler(t)
+	s.cfg.StateProtection.EncryptPasswordField = true
+	s.cfg.StateProtection.MasterPassphrase = "master-passphrase"
+	setConfirmed(t, store, base.Add(-time.Hour))
+
+	tNow := base
+	_ = s.Tick(tNow)
+	tNow = tNow.Add(8*24*time.Hour + time.Minute)
+	_ = s.Tick(tNow) // → PENDING_TRIGGER
+	tNow = tNow.Add(time.Minute)
+	_ = s.Tick(tNow) // → WARNED
+	tNow = tNow.Add(73 * time.Hour)
+	_ = s.Tick(tNow) // → PASSWORD_SENT
+
+	st, _ := store.Load()
+	if st.CurrentArchivePassword == "" || st.CurrentArchivePassword == "secret-password" {
+		t.Fatalf("state 中不应明文保存密码: %q", st.CurrentArchivePassword)
 	}
-	for _, c := range cases {
-		got := missedRounds(&last, ci, last.Add(c.elapsed))
-		if got != c.want {
-			t.Errorf("elapsed=%v: got %d want %d", c.elapsed, got, c.want)
-		}
+	if n.lastPassword != "secret-password" {
+		t.Fatalf("密码邮件应收到明文密码，实际 %q", n.lastPassword)
 	}
-	if missedRounds(nil, ci, base) != 0 {
-		t.Error("nil lastConfirmed 应返回 0")
+}
+
+func TestEncryptedArchivePasswordReadsLegacyPlaintext(t *testing.T) {
+	s, store, n, _ := newTestScheduler(t)
+	s.cfg.StateProtection.EncryptPasswordField = true
+	s.cfg.StateProtection.MasterPassphrase = "master-passphrase"
+	st, _ := store.Load()
+	st.Phase = state.PhaseWarned
+	st.WarnedAt = ptr(base)
+	st.PendingToken = "tok-fixed"
+	st.CurrentArchivePath = "/tmp/archive.zip"
+	st.CurrentArchivePassword = "legacy-password"
+	if err := store.Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Tick(base.Add(73 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if n.lastPassword != "legacy-password" {
+		t.Fatalf("旧明文密码应兼容投递，实际 %q", n.lastPassword)
+	}
+}
+
+// 非密码阶段不应提前打包。
+func TestNoPackBeforePasswordStage(t *testing.T) {
+	s, store, _, p := newTestScheduler(t)
+	setConfirmed(t, store, base)
+
+	packsBefore := p.packs
+	_ = s.Tick(base)
+	_ = s.Tick(base.Add(8*24*time.Hour + time.Minute))
+	if p.packs != packsBefore {
+		t.Fatal("密码阶段前不应打包")
+	}
+}
+
+func TestMonthlyCheckinTimeClampsMonthEnd(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 2, 28, 1, 0, 0, 0, time.UTC)
+	got := monthlyCheckinTime(now, 31, loc)
+	want := time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("got %s want %s", got, want)
 	}
 }
 

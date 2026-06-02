@@ -32,9 +32,12 @@ const (
 type Stage string
 
 const (
-	StageWarn     Stage = "WARN"
-	StagePassword Stage = "PASSWORD"
-	StageFile     Stage = "FILE"
+	StageWarn             Stage = "WARN"
+	StagePassword         Stage = "PASSWORD"
+	StageFile             Stage = "FILE"
+	StageWarnTelegram     Stage = "WARN_TELEGRAM"
+	StagePasswordTelegram Stage = "PASSWORD_TELEGRAM"
+	StageFileTelegram     Stage = "FILE_TELEGRAM"
 )
 
 // State 是单行状态快照。时间字段用指针以区分「零值」与「未设置(NULL)」。
@@ -58,6 +61,14 @@ type State struct {
 // Store 封装 SQLite 连接。
 type Store struct {
 	db *sql.DB
+}
+
+// MigrationResult 描述一次启动时状态归一化结果。
+type MigrationResult struct {
+	Changed bool
+	From    Phase
+	To      Phase
+	Reason  string
 }
 
 // Open 打开（或创建）数据库，启用 WAL，建表，并确保存在单行状态。
@@ -174,10 +185,10 @@ func parseTime(ns sql.NullString) (*time.Time, error) {
 // Load 读取单行状态。
 func (s *Store) Load() (*State, error) {
 	var (
-		st                                                              State
-		phase                                                           string
-		lastConfirmed, lastCheckin, lastPack, lastHeartbeat             sql.NullString
-		finalWarning, warned, passwordSent, fileSent                    sql.NullString
+		st                                                  State
+		phase                                               string
+		lastConfirmed, lastCheckin, lastPack, lastHeartbeat sql.NullString
+		finalWarning, warned, passwordSent, fileSent        sql.NullString
 	)
 	row := s.db.QueryRow(`
 SELECT phase, last_confirmed_at, last_checkin_sent_at, last_pack_at, last_heartbeat_at,
@@ -225,6 +236,80 @@ WHERE id = 1`,
 		return fmt.Errorf("保存状态失败: %w", err)
 	}
 	return nil
+}
+
+// NormalizeForTargetFlow 在启动时把明显不符合目标流程前置条件的旧状态归一化。
+//
+// 保守原则：
+//   - 不迁移看起来仍是有效目标流程的状态，避免打断正在进行的真实投递。
+//   - 对缺少 pending token / last_checkin_sent_at 的触发阶段重置为 ALIVE，
+//     因为用户已经无法通过 Telegram 按钮取消，继续推进可能误通知受益人。
+//   - 对未知 phase 重置为 ALIVE，避免调度器静默卡死。
+func (s *Store) NormalizeForTargetFlow(now time.Time) (*MigrationResult, error) {
+	st, err := s.Load()
+	if err != nil {
+		return nil, err
+	}
+	reason := targetFlowNormalizationReason(st)
+	if reason == "" {
+		return &MigrationResult{Changed: false, From: st.Phase, To: st.Phase}, nil
+	}
+
+	from := st.Phase
+	resetToAlive(st, now)
+	if err := s.Save(st); err != nil {
+		return nil, err
+	}
+	if err := s.ClearDeliveries(); err != nil {
+		return nil, err
+	}
+	detail := fmt.Sprintf("from=%s,to=%s,reason=%s", from, st.Phase, reason)
+	if err := s.Audit("target_flow_state_normalized", detail, now); err != nil {
+		return nil, err
+	}
+	return &MigrationResult{Changed: true, From: from, To: st.Phase, Reason: reason}, nil
+}
+
+func targetFlowNormalizationReason(st *State) string {
+	switch st.Phase {
+	case PhaseAlive, PhaseGrace, PhasePendingTrigger, PhaseWarned, PhasePasswordSent, PhaseFileSent, PhaseCompleted:
+	default:
+		return "unknown_phase"
+	}
+
+	if st.Phase == PhaseAlive || st.Phase == PhaseCompleted || st.Phase == PhaseFileSent {
+		return ""
+	}
+	if st.LastCheckinSentAt == nil {
+		return "missing_last_checkin_sent_at"
+	}
+	if st.PendingToken == "" {
+		return "missing_pending_token"
+	}
+	if st.Phase == PhasePasswordSent && (st.CurrentArchivePath == "" || st.CurrentArchivePassword == "") {
+		return "missing_archive_after_password_sent"
+	}
+	return ""
+}
+
+func resetToAlive(st *State, now time.Time) {
+	st.Phase = PhaseAlive
+	st.LastConfirmedAt = ptr(now)
+	st.MissCount = 0
+	st.PendingToken = ""
+	st.FinalWarningAt = nil
+	st.WarnedAt = nil
+	st.PasswordSentAt = nil
+	st.FileSentAt = nil
+	st.CurrentArchivePath = ""
+	st.CurrentArchivePassword = ""
+	st.CurrentArchiveSHA256 = ""
+	st.LastPackAt = nil
+}
+
+func ptr(t time.Time) *time.Time {
+	tt := t.UTC()
+	return &tt
 }
 
 // --- deliveries 幂等表 ---
