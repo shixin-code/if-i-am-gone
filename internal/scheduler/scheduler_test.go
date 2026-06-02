@@ -98,14 +98,6 @@ func newTestScheduler(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier, *f
 
 	cfg := &config.Config{
 		SourceDir: "/tmp",
-		Intervals: config.Intervals{
-			PackInterval:    config.Duration(24 * time.Hour),
-			CheckinInterval: config.Duration(24 * time.Hour),
-			MissThreshold:   5,
-			FinalGrace:      config.Duration(48 * time.Hour),
-			PasswordDelay:   config.Duration(72 * time.Hour),
-			FileDelay:       config.Duration(96 * time.Hour),
-		},
 		TargetFlow: config.TargetFlow{
 			CheckinDayOfMonth:      1,
 			DailyReminderDays:      7,
@@ -263,7 +255,7 @@ func TestDowntimeDoesNotOverwriteOutstandingCheckin(t *testing.T) {
 }
 
 // 宕机重放：长时间不 tick 后，单次 tick 应立即把「漏回合」算清并进入 PENDING_TRIGGER。
-// 后续每个阶段的延迟窗口（final_grace/password_delay/file_delay）是从「该阶段开始那一刻」
+// 后续每个阶段的延迟窗口是从「该阶段开始那一刻」
 // 起算的真实缓冲——这是死亡开关的正确语义：不能因为宕机就跳过给用户的最后机会窗口。
 // 所以推进各阶段时需让时钟越过对应窗口。最后验证投递幂等。
 func TestDowntimeReplay(t *testing.T) {
@@ -294,14 +286,14 @@ func TestDowntimeReplay(t *testing.T) {
 	tNow = tNow.Add(73 * time.Hour)
 	_ = s.Tick(tNow)
 	if st, _ := store.Load(); st.Phase != state.PhasePasswordSent {
-		t.Fatalf("越过 password_delay 后应到 PASSWORD_SENT，实际 %s", st.Phase)
+		t.Fatalf("越过 password_delay_after_warn 后应到 PASSWORD_SENT，实际 %s", st.Phase)
 	}
 
 	// 越过 file_delay_after_password(96h)：PASSWORD_SENT → FILE_SENT
 	tNow = tNow.Add(97 * time.Hour)
 	_ = s.Tick(tNow)
 	if st, _ := store.Load(); st.Phase != state.PhaseFileSent {
-		t.Fatalf("越过 file_delay 后应到 FILE_SENT，实际 %s", st.Phase)
+		t.Fatalf("越过 file_delay_after_password 后应到 FILE_SENT，实际 %s", st.Phase)
 	}
 
 	// 每个受益人每阶段应恰好投递一次。

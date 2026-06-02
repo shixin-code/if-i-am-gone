@@ -20,14 +20,6 @@ cat > "$TMP_DIR/config.yaml" <<'YAML'
 source_dir: /data/source
 state_dir: /data/state
 
-intervals:
-  pack_interval: 24h
-  checkin_interval: 24h
-  miss_threshold: 5
-  final_grace: 48h
-  password_delay: 72h
-  file_delay: 96h
-
 target_flow:
   checkin_day_of_month: 31
   daily_reminder_days: 7

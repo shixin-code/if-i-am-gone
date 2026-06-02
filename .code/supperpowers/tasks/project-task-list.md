@@ -155,10 +155,15 @@
   - 涉及文件：`docs/telegram-to-delivery-flow.md`。
 
 - `[已完成]` README 与示例配置同步目标流程。
-  - 当前情况：README 和 `config.example.yaml` 已补充目标流程说明，并注明旧 `intervals` 字段仅作为兼容配置保留。
+  - 当前情况：README 和 `config.example.yaml` 已补充目标流程说明；旧 `intervals` 字段已清理，目标流程统一使用 `target_flow`。
   - 目标：同步公开文档与示例配置到“月度确认、连续提醒、密码阶段打包、统一下载链接投递”的目标流程，同时保留当前实现状态说明，避免用户误配置。
   - 证据：`README.md`、`config.example.yaml`。
   - 涉及文件：`README.md`、`config.example.yaml`、`.env.example`。
+
+- `[已完成]` 清理旧 `intervals` 兼容配置字段。
+  - 当前情况：已从配置结构、默认值来源、校验逻辑、示例配置、README、Docker smoke 与测试配置中移除旧 `intervals` 字段；目标流程统一使用 `target_flow`。
+  - 目标：移除 `pack_interval`、`checkin_interval`、`miss_threshold`、`final_grace`、`password_delay`、`file_delay` 等旧配置入口，避免新旧节奏并存造成误解。
+  - 涉及文件：`internal/config/config.go`、`internal/config/config_test.go`、`config.example.yaml`、`README.md`、`scripts/docker-smoke.sh`。
 
 - `[已完成]` 月度确认调度配置。
   - 当前情况：代码已新增 `target_flow.checkin_day_of_month`、`target_flow.daily_reminder_days`、`target_flow.timezone`、`target_flow.password_delay_after_warn`、`target_flow.file_delay_after_password`，并由 Scheduler 使用目标流程节奏。

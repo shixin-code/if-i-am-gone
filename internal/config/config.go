@@ -17,7 +17,6 @@ import (
 // Config 是整个应用的配置根。所有时间间隔均为 time.Duration。
 type Config struct {
 	SourceDir       string               `yaml:"source_dir"`
-	Intervals       Intervals            `yaml:"intervals"`
 	TargetFlow      TargetFlow           `yaml:"target_flow"`
 	Archive         Archive              `yaml:"archive"`
 	Telegram        Telegram             `yaml:"telegram"`
@@ -31,16 +30,6 @@ type Config struct {
 
 	// StateDir 是 state.db、加密包、日志的存放目录。默认取 Logging.File 的目录或 /data/state。
 	StateDir string `yaml:"state_dir"`
-}
-
-// Intervals 控制整套节奏。全部基于绝对时间戳判定。
-type Intervals struct {
-	PackInterval    Duration `yaml:"pack_interval"`
-	CheckinInterval Duration `yaml:"checkin_interval"`
-	MissThreshold   int      `yaml:"miss_threshold"`
-	FinalGrace      Duration `yaml:"final_grace"`
-	PasswordDelay   Duration `yaml:"password_delay"`
-	FileDelay       Duration `yaml:"file_delay"`
 }
 
 // TargetFlow 是目标流程的节奏配置：每月确认、连续提醒、密码阶段打包、下载链接投递。
@@ -243,13 +232,7 @@ func (c *Config) applyDefaults() {
 		c.TargetFlow.DailyReminderDays = 7
 	}
 	if c.TargetFlow.PasswordDelayAfterWarn.Std() == 0 {
-		c.TargetFlow.PasswordDelayAfterWarn = c.Intervals.PasswordDelay
-	}
-	if c.TargetFlow.PasswordDelayAfterWarn.Std() == 0 {
 		c.TargetFlow.PasswordDelayAfterWarn = Duration(72 * time.Hour)
-	}
-	if c.TargetFlow.FileDelayAfterPassword.Std() == 0 {
-		c.TargetFlow.FileDelayAfterPassword = c.Intervals.FileDelay
 	}
 	if c.TargetFlow.FileDelayAfterPassword.Std() == 0 {
 		c.TargetFlow.FileDelayAfterPassword = Duration(168 * time.Hour)
@@ -288,15 +271,6 @@ func (c *Config) Validate() error {
 	var errs []string
 	if c.SourceDir == "" {
 		errs = append(errs, "source_dir 不能为空")
-	}
-	if c.Intervals.CheckinInterval.Std() <= 0 {
-		errs = append(errs, "intervals.checkin_interval 必须为正")
-	}
-	if c.Intervals.PackInterval.Std() <= 0 {
-		errs = append(errs, "intervals.pack_interval 必须为正")
-	}
-	if c.Intervals.MissThreshold < 1 {
-		errs = append(errs, "intervals.miss_threshold 必须 >= 1")
 	}
 	if c.TargetFlow.CheckinDayOfMonth < 1 || c.TargetFlow.CheckinDayOfMonth > 31 {
 		errs = append(errs, "target_flow.checkin_day_of_month 必须在 1..31 之间")

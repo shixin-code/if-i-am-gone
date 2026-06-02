@@ -75,16 +75,6 @@ docker compose logs -f
 | `file_delay_after_password` | 密码邮件成功后多久发送下载链接 | `168h` |
 | `timezone` | 月度确认日和预计日期展示时区 | `Asia/Shanghai` |
 
-以下旧参数仅为兼容旧配置保留，目标调度主流程已改用 `target_flow`：
-
-| 参数 | 含义 | 默认 |
-|---|---|---|
-| `checkin_interval` | 旧确认间隔字段 | 24h |
-| `miss_threshold` | 旧漏确认阈值字段 | 5 |
-| `final_grace` | 旧最后宽限字段 | 48h |
-| `password_delay` | 未配置目标密码延迟时的默认来源 | 72h |
-| `file_delay` | 未配置目标文件延迟时的默认来源 | 96h |
-
 `state_protection.encrypt_password_field: true` 时，必须在 `.env` 配置 `MASTER_PASSPHRASE`。已有旧明文 state 可兼容读取；新打包产生的密码会以加密形式写入 `state.db`。
 
 下载链接支持两种模式：

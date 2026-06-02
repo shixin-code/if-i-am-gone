@@ -76,7 +76,7 @@ MVP 已具备以下能力：
 
 - 升级前备份 `data/state/`、`config.yaml`、`.env`。
 - 新配置应补充 `target_flow` 字段。
-- 旧 `intervals` 字段仍保留兼容，但目标调度主流程已改用 `target_flow`。
+- 旧 `intervals` 字段已从示例配置和代码结构中移除；目标调度主流程统一使用 `target_flow`。
 - 如果启用 `state_protection.encrypt_password_field`，必须设置并离线备份 `MASTER_PASSPHRASE`。
 - 启动时会对缺少目标流程必要字段的旧触发中 state 做安全归一化，避免误投递。
 - 详细规则见 `docs/state-migration.md`。

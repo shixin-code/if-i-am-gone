@@ -273,7 +273,7 @@ flowchart TD
 ## 当前实现状态
 
 - 当前代码已使用 `target_flow.checkin_day_of_month` 和 `target_flow.daily_reminder_days` 执行“每月固定日期 + 连续提醒期”流程。
-- 当前代码不再周期性提前打包；`intervals.pack_interval` 仅作为旧配置兼容字段保留，目标流程在密码阶段到达后才打包。
+- 当前代码不再周期性提前打包；目标流程只在密码阶段到达后才打包。
 - 当前代码已实现受益人预提醒、密码邮件、下载链接邮件三个阶段前的 Telegram 阶段提醒，并通过幂等记录避免重复提醒。
 - 当前代码已移除文件阶段附件投递分支，统一生成下载链接。
 - `download.mode=self_hosted` 会生成本机下载 token；`download.mode=s3` 会上传归档到 S3-compatible 对象存储并生成预签名链接。真实对象存储仍需部署环境联调。

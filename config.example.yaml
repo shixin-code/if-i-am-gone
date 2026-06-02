@@ -5,15 +5,6 @@
 source_dir: /data/source             # 挂载进容器、待打包加密的目录
 state_dir: /data/state               # state.db、加密包、日志的存放目录
 
-# 兼容旧配置字段：当前目标调度已使用 target_flow，以下 intervals 后续会清理或迁移。
-intervals:
-  pack_interval: 24h                 # 兼容旧字段：目标流程不再周期性提前打包
-  checkin_interval: 24h              # 兼容旧字段：目标流程改用 target_flow.checkin_day_of_month
-  miss_threshold: 5                  # 兼容旧字段：目标流程改用 target_flow.daily_reminder_days
-  final_grace: 48h                   # 兼容旧字段：目标流程连续提醒结束后直接进入受益人预提醒阶段
-  password_delay: 72h                # 兼容旧字段：未配置 target_flow.password_delay_after_warn 时作为默认来源
-  file_delay: 96h                    # 兼容旧字段：未配置 target_flow.file_delay_after_password 时作为默认来源
-
 # 目标流程配置：当前调度主流程读取这些字段。
 target_flow:
   checkin_day_of_month: 1            # 每月几号发送安全确认
@@ -25,7 +16,7 @@ target_flow:
 archive:
   keep_archives: 3                   # 本地保留最近几个加密包
   password_length: 32                # 随机密码长度
-  large_file_threshold: 20MB         # 兼容旧字段：目标流程不再按大小判断，统一发送下载链接
+  large_file_threshold: 20MB         # 目标流程不再按大小判断，统一发送下载链接
 
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN}   # 找 @BotFather 创建 bot 获取

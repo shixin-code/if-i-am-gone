@@ -27,13 +27,6 @@ func minimalConfig() string {
 	return `
 source_dir: /tmp/source
 state_dir: /tmp/state
-intervals:
-  pack_interval: 24h
-  checkin_interval: 24h
-  miss_threshold: 5
-  final_grace: 48h
-  password_delay: 72h
-  file_delay: 96h
 telegram:
   bot_token: ${TEST_TELEGRAM_TOKEN}
   chat_id: 123
@@ -94,8 +87,8 @@ func TestLoadExpandsEnvAndAppliesDefaults(t *testing.T) {
 	if cfg.TargetFlow.PasswordDelayAfterWarn.Std() != 72*time.Hour {
 		t.Fatalf("密码延迟默认值不对: %s", cfg.TargetFlow.PasswordDelayAfterWarn.Std())
 	}
-	if cfg.TargetFlow.FileDelayAfterPassword.Std() != 96*time.Hour {
-		t.Fatalf("文件延迟默认值应来自 intervals.file_delay: %s", cfg.TargetFlow.FileDelayAfterPassword.Std())
+	if cfg.TargetFlow.FileDelayAfterPassword.Std() != 168*time.Hour {
+		t.Fatalf("文件延迟默认值不对: %s", cfg.TargetFlow.FileDelayAfterPassword.Std())
 	}
 	if cfg.TargetFlow.Timezone != "Asia/Shanghai" {
 		t.Fatalf("默认时区不对: %s", cfg.TargetFlow.Timezone)

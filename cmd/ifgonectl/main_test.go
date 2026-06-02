@@ -30,13 +30,6 @@ func writeCtlConfig(t *testing.T, dir string) string {
 	body := `
 source_dir: ` + source + `
 state_dir: ` + stateDir + `
-intervals:
-  pack_interval: 24h
-  checkin_interval: 24h
-  miss_threshold: 5
-  final_grace: 48h
-  password_delay: 72h
-  file_delay: 96h
 target_flow:
   checkin_day_of_month: 1
   daily_reminder_days: 7
