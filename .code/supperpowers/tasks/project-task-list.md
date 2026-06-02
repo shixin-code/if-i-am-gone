@@ -405,9 +405,10 @@
 
 ## 仓库整理
 
-- `[未完成]` 清理未提交变更并按逻辑提交。
-  - 当前情况：仓库已有提交记录，当前仍有文档、任务表与代码文案等未提交变更。
+- `[已完成]` 清理未提交变更并按逻辑提交。
+  - 当前情况：已用 `git status --short` 审核改动范围，排除 `.env`、`config.yaml`、`data/`、构建产物等敏感或运行产物后完成提交。
   - 目标：用 `git status --short` 审核改动范围，排除 `.env`、`config.yaml`、`data/`、构建产物等敏感或运行产物后，按逻辑生成 gitlog 并提交。
+  - 验证：`go test -count=1 ./...`、`go build ./cmd/ifgone ./cmd/ifgonectl`、`git diff --check`、敏感扫描通过；提交 `17a2e1a feat(flow): 完善目标流程与下载链路`。
 
 - `[已完成]` 确认 `.gitignore` 覆盖敏感与生成文件。
   - 当前情况：`.gitignore` 已覆盖 `.env`、`config.yaml`、`/data/`、数据库、ZIP 归档、根目录 `ifgone` 二进制和 `bin/`。`.code/supperpowers/` 未全局忽略，因为用户明确要求 `project-task-list.md` 可提交，后续提交时需按范围排除不需要的 superpowers 临时文件。
