@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config 是整个应用的配置根。所有时间间隔均为 time.Duration。
+// Config 是整个应用的配置根。所有时间间隔都通过 Duration 表达。
 type Config struct {
 	SourceDir       string               `yaml:"source_dir"`
 	TargetFlow      TargetFlow           `yaml:"target_flow"`
@@ -36,9 +36,10 @@ type Config struct {
 type TargetFlow struct {
 	CheckinDayOfMonth      int      `yaml:"checkin_day_of_month"`
 	ReminderCount          int      `yaml:"reminder_count"`    // 漏确认后连续提醒几次
-	ReminderInterval       Duration `yaml:"reminder_interval"` // 两次提醒间隔（Go duration: 1m/2h/168h）
+	ReminderInterval       Duration `yaml:"reminder_interval"` // 两次提醒间隔（Go duration: 1m/2h/72h，或按天语义 1d/7d）
 	PasswordDelayAfterWarn Duration `yaml:"password_delay_after_warn"`
 	FileDelayAfterPassword Duration `yaml:"file_delay_after_password"`
+	SendTimeOfDay          string   `yaml:"send_time_of_day"`
 	Timezone               string   `yaml:"timezone"`
 }
 
@@ -137,23 +138,68 @@ type Templates struct {
 	FileEmailBodyLink     string `yaml:"file_email_body_link"`
 }
 
-// Duration 包装 time.Duration，让 YAML 里可写 "24h"、"72h" 这样的字符串。
-type Duration time.Duration
+// Duration 包装 time.Duration，并保留原始字面量的语义。
+// 例如 72h 与 3d 当前标准时长相同，但 3d 额外表达“按天”的业务含义。
+type Duration struct {
+	value    time.Duration
+	kind     durationKind
+	dayCount int
+}
+
+type durationKind uint8
+
+const (
+	durationKindStd durationKind = iota
+	durationKindDays
+)
+
+var dayDurationRe = regexp.MustCompile(`^([1-9]\d*)d$`)
+var timeOfDayRe = regexp.MustCompile(`^(?:[01]\d|2[0-3]):[0-5]\d$`)
 
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	var s string
 	if err := value.Decode(&s); err != nil {
 		return err
 	}
+	s = strings.TrimSpace(s)
+	if m := dayDurationRe.FindStringSubmatch(s); m != nil {
+		days, err := strconv.Atoi(m[1])
+		if err != nil {
+			return fmt.Errorf("无法解析天数 %q: %w", s, err)
+		}
+		*d = DayDuration(days)
+		return nil
+	}
 	parsed, err := time.ParseDuration(s)
 	if err != nil {
 		return fmt.Errorf("无法解析时长 %q: %w", s, err)
 	}
-	*d = Duration(parsed)
+	*d = DurationFromStd(parsed)
 	return nil
 }
 
-func (d Duration) Std() time.Duration { return time.Duration(d) }
+func (d Duration) Std() time.Duration { return d.value }
+
+func (d Duration) IsDayBased() bool { return d.kind == durationKindDays }
+
+func (d Duration) DayCount() (int, bool) {
+	if d.kind != durationKindDays {
+		return 0, false
+	}
+	return d.dayCount, true
+}
+
+func DurationFromStd(v time.Duration) Duration {
+	return Duration{value: v, kind: durationKindStd}
+}
+
+func DayDuration(days int) Duration {
+	return Duration{
+		value:    time.Duration(days) * 24 * time.Hour,
+		kind:     durationKindDays,
+		dayCount: days,
+	}
+}
 
 // Bytes 让 YAML 里可写 "20MB"、"500KB"、"1GB" 这样的字节阈值。
 type Bytes int64
@@ -233,13 +279,16 @@ func (c *Config) applyDefaults() {
 		c.TargetFlow.ReminderCount = 7
 	}
 	if c.TargetFlow.ReminderInterval.Std() == 0 {
-		c.TargetFlow.ReminderInterval = Duration(24 * time.Hour)
+		c.TargetFlow.ReminderInterval = DayDuration(1)
 	}
 	if c.TargetFlow.PasswordDelayAfterWarn.Std() == 0 {
-		c.TargetFlow.PasswordDelayAfterWarn = Duration(72 * time.Hour)
+		c.TargetFlow.PasswordDelayAfterWarn = DayDuration(3)
 	}
 	if c.TargetFlow.FileDelayAfterPassword.Std() == 0 {
-		c.TargetFlow.FileDelayAfterPassword = Duration(168 * time.Hour)
+		c.TargetFlow.FileDelayAfterPassword = DayDuration(7)
+	}
+	if c.TargetFlow.SendTimeOfDay == "" {
+		c.TargetFlow.SendTimeOfDay = "00:00"
 	}
 	if c.TargetFlow.Timezone == "" {
 		c.TargetFlow.Timezone = "Asia/Shanghai"
@@ -248,7 +297,7 @@ func (c *Config) applyDefaults() {
 		c.Download.Mode = "self_hosted"
 	}
 	if c.Download.LinkExpiry.Std() == 0 {
-		c.Download.LinkExpiry = Duration(336 * time.Hour)
+		c.Download.LinkExpiry = DayDuration(14)
 	}
 	if c.Download.MaxDownloads == 0 {
 		c.Download.MaxDownloads = 5
@@ -257,10 +306,10 @@ func (c *Config) applyDefaults() {
 		c.Download.SelfHosted.ListenPort = 8080
 	}
 	if c.Reliability.Healthcheck.Interval.Std() == 0 {
-		c.Reliability.Healthcheck.Interval = Duration(10 * time.Minute)
+		c.Reliability.Healthcheck.Interval = DurationFromStd(10 * time.Minute)
 	}
 	if c.Reliability.Healthcheck.Timeout.Std() == 0 {
-		c.Reliability.Healthcheck.Timeout = Duration(10 * time.Second)
+		c.Reliability.Healthcheck.Timeout = DurationFromStd(10 * time.Second)
 	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "INFO"
@@ -290,6 +339,9 @@ func (c *Config) Validate() error {
 	}
 	if c.TargetFlow.FileDelayAfterPassword.Std() <= 0 {
 		errs = append(errs, "target_flow.file_delay_after_password 必须为正")
+	}
+	if !timeOfDayRe.MatchString(c.TargetFlow.SendTimeOfDay) {
+		errs = append(errs, "target_flow.send_time_of_day 必须是 HH:MM 格式")
 	}
 	if _, err := time.LoadLocation(c.TargetFlow.Timezone); err != nil {
 		errs = append(errs, fmt.Sprintf("target_flow.timezone 无法加载: %v", err))

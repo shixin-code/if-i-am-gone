@@ -59,7 +59,7 @@ flowchart TD
 
 ## 默认时间线
 
-以下以“每月 1 号发送确认，`reminder_count=7`、`reminder_interval=24h`，`password_delay_after_warn=72h`，`file_delay_after_password=168h`”为例。实际日期应由配置计算；配置变化后，D8/D11/D18 都只是示例节点，不是固定日期。
+以下以“每月 1 号 `10:30` 发送确认，`reminder_count=7`、`reminder_interval=1d`，`password_delay_after_warn=3d`，`file_delay_after_password=7d`”为例。实际日期应由配置计算；配置变化后，D8/D11/D18 都只是示例节点，不是固定日期。
 
 | 相对时间 | 触发条件 | 发送对象 | 渠道 | 发送内容 | 用户还能否取消 |
 |---:|---|---|---|---|---|
@@ -110,7 +110,7 @@ flowchart TD
 ✅ 一切正常
 ```
 
-流程图中用 `N = 1..reminder_count` 的循环表示，每隔 `reminder_interval` 发一次，不再逐天展开。默认 `reminder_count=7`、`reminder_interval=24h`，第 `reminder_count` 次使用最后连续提醒文案。
+流程图中用 `N = 1..reminder_count` 的循环表示，每隔 `reminder_interval` 发一次，不再逐天展开。默认 `reminder_count=7`、`reminder_interval=1d`，第 `reminder_count` 次使用最后连续提醒文案。
 
 普通提醒建议文案：
 
@@ -288,17 +288,21 @@ flowchart TD
 | 配置项 | 示例 | 含义 |
 |---|---:|---|
 | `checkin_day_of_month` | `1` | 每月几号发送安全确认 |
+| `send_time_of_day` | `10:30` | 月度确认与按天语义阶段的发送时间（本地时区 HH:MM） |
 | `reminder_count` | `7` | 未确认后连续提醒几次 |
-| `reminder_interval` | `24h` | 两次提醒间隔（Go duration） |
-| `password_delay_after_warn` | `72h` | 通知受益人后多久发送密码 |
-| `file_delay_after_password` | `168h` | 发送密码后多久发送下载链接 |
+| `reminder_interval` | `1d` | 两次提醒间隔（支持 Go duration，也支持整数天 `d`） |
+| `password_delay_after_warn` | `3d` | 通知受益人后多久发送密码 |
+| `file_delay_after_password` | `7d` | 发送密码后多久发送下载链接 |
 | `timezone` | `Asia/Shanghai` | 月度确认日和预计发送日期展示时区 |
-| `download.link_expiry` | `336h` | 下载链接有效期 |
+| `download.link_expiry` | `14d` | 下载链接有效期 |
 | `download.max_downloads` | `5` | 下载链接最多允许下载次数 |
+
+按天语义推荐写 `1d`、`3d`、`7d`；如果确实需要精确小时或分钟，再使用 `72h`、`90m` 这类 Go duration。
+`send_time_of_day` 只影响 `target_flow` 主流程：月度确认，以及 `reminder_interval` / `password_delay_after_warn` / `file_delay_after_password` 这些按天语义的 `d` 配置。
 
 ## 当前实现状态
 
-- 当前代码已使用 `target_flow.checkin_day_of_month`、`target_flow.reminder_count` 和 `target_flow.reminder_interval` 执行“每月固定日期 + 连续提醒期”流程。
+- 当前代码已使用 `target_flow.checkin_day_of_month`、`target_flow.send_time_of_day`、`target_flow.reminder_count` 和 `target_flow.reminder_interval` 执行“每月固定日期 + 连续提醒期”流程。
 - 当前代码不再周期性提前打包；目标流程只在密码阶段到达后才打包。
 - 当前代码已实现受益人预提醒、密码邮件、下载链接邮件三个阶段前的 Telegram 阶段提醒，并通过幂等记录避免重复提醒。
 - 当前代码已移除文件阶段附件投递分支，统一生成下载链接。

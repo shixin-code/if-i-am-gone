@@ -245,15 +245,15 @@ func describeNextAction(cfg *config.Config, st *state.State, now time.Time) stri
 		if st.PendingToken != "" {
 			return "等待用户点击最新 Telegram 确认按钮"
 		}
-		return fmt.Sprintf("等待每月 %d 号发送安全确认", cfg.TargetFlow.CheckinDayOfMonth)
+		return fmt.Sprintf("等待每月 %d 号 %s 发送安全确认", cfg.TargetFlow.CheckinDayOfMonth, cfg.TargetFlow.SendTimeOfDay)
 	case state.PhaseGrace:
 		return "处于连续提醒期，下一次 tick 会按天数发送 Telegram 提醒或进入预提醒阶段"
 	case state.PhasePendingTrigger:
 		return "下一次 tick 会先发送用户阶段提醒，再向受益人发送预提醒邮件"
 	case state.PhaseWarned:
-		return fmt.Sprintf("等待密码阶段到期，目标时间约为 %s", dueText(st.WarnedAt, cfg.TargetFlow.PasswordDelayAfterWarn.Std(), now))
+		return fmt.Sprintf("等待密码阶段到期，目标时间约为 %s", dueText(st.WarnedAt, cfg.TargetFlow.PasswordDelayAfterWarn, cfg.TargetFlow, now))
 	case state.PhasePasswordSent:
-		return fmt.Sprintf("等待下载链接阶段到期，目标时间约为 %s", dueText(st.PasswordSentAt, cfg.TargetFlow.FileDelayAfterPassword.Std(), now))
+		return fmt.Sprintf("等待下载链接阶段到期，目标时间约为 %s", dueText(st.PasswordSentAt, cfg.TargetFlow.FileDelayAfterPassword, cfg.TargetFlow, now))
 	case state.PhaseFileSent:
 		return "下一次 tick 会进入 COMPLETED 并清理过期下载 token"
 	case state.PhaseCompleted:
@@ -263,15 +263,40 @@ func describeNextAction(cfg *config.Config, st *state.State, now time.Time) stri
 	}
 }
 
-func dueText(t *time.Time, delay time.Duration, now time.Time) string {
+func dueText(t *time.Time, delay config.Duration, flow config.TargetFlow, now time.Time) string {
 	if t == nil {
 		return "立即"
 	}
-	due := t.Add(delay)
+	due := dueAt(*t, delay, flow)
 	if !now.Before(due) {
 		return "立即"
 	}
 	return due.Format(time.RFC3339)
+}
+
+func dueAt(base time.Time, delay config.Duration, flow config.TargetFlow) time.Time {
+	if delay.IsDayBased() {
+		days, _ := delay.DayCount()
+		if days <= 0 {
+			days = 1
+		}
+		loc, err := time.LoadLocation(flow.Timezone)
+		if err != nil {
+			loc = time.Local
+		}
+		hour, minute := parseTimeOfDay(flow.SendTimeOfDay)
+		target := base.In(loc).AddDate(0, 0, days)
+		y, m, d := target.Date()
+		return time.Date(y, m, d, hour, minute, 0, 0, loc).UTC()
+	}
+	return base.Add(delay.Std())
+}
+
+func parseTimeOfDay(s string) (hour, minute int) {
+	if _, err := fmt.Sscanf(s, "%d:%d", &hour, &minute); err != nil {
+		return 0, 0
+	}
+	return hour, minute
 }
 
 func formatTime(t *time.Time) string {

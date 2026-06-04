@@ -30,10 +30,13 @@
 ## 4. 配置目标流程
 
 - 设置 `target_flow.checkin_day_of_month`，例如每月 1 号。
-- 设置 `target_flow.reminder_count`（提醒次数，默认 7）和 `target_flow.reminder_interval`（提醒间隔，默认 24h）。
-- 设置 `target_flow.password_delay_after_warn`，默认 72h。
-- 设置 `target_flow.file_delay_after_password`，默认 168h。
+- 设置 `target_flow.send_time_of_day`，例如 `10:30`。
+- 设置 `target_flow.reminder_count`（提醒次数，默认 7）和 `target_flow.reminder_interval`（提醒间隔，默认 `1d`）。
+- 设置 `target_flow.password_delay_after_warn`，默认 `3d`。
+- 设置 `target_flow.file_delay_after_password`，默认 `7d`。
 - 设置 `target_flow.timezone`，建议 `Asia/Shanghai`。
+- 按天语义推荐写 `d`，例如 `1d`、`3d`、`7d`；需要精确小时再写 `72h` 这类 Go duration。
+- `send_time_of_day` 只作用于 `target_flow` 主流程和这些按天语义的 `d` 配置，不影响 `download.link_expiry` 等其他时间字段。
 
 ## 5. 配置下载链接
 

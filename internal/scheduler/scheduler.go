@@ -156,7 +156,7 @@ func (s *Scheduler) tickAlive(st *state.State, now time.Time) error {
 }
 
 func (s *Scheduler) tickOutstandingCheckin(st *state.State, now time.Time) error {
-	n := remindersSent(*st.LastCheckinSentAt, now, s.cfg.TargetFlow.ReminderInterval.Std())
+	n := remindersSent(*st.LastCheckinSentAt, now, s.cfg.TargetFlow, loadLocation(s.cfg.TargetFlow.Timezone))
 	if n < 1 {
 		s.maybeHeartbeat(st, now)
 		return s.store.Save(st)
@@ -198,8 +198,8 @@ func (s *Scheduler) tickPendingTrigger(st *state.State, now time.Time) error {
 		return s.store.Save(st)
 	}
 
-	passwordSendDate := now.Add(s.cfg.TargetFlow.PasswordDelayAfterWarn.Std())
-	fileLinkSendDate := passwordSendDate.Add(s.cfg.TargetFlow.FileDelayAfterPassword.Std())
+	passwordSendDate := nextStageTime(now, s.cfg.TargetFlow.PasswordDelayAfterWarn, s.cfg.TargetFlow, loadLocation(s.cfg.TargetFlow.Timezone))
+	fileLinkSendDate := nextStageTime(passwordSendDate, s.cfg.TargetFlow.FileDelayAfterPassword, s.cfg.TargetFlow, loadLocation(s.cfg.TargetFlow.Timezone))
 	allDelivered := true
 	for _, b := range s.cfg.Beneficiaries {
 		if !s.deliver(b.Email, state.StageWarn, now, func() error {
@@ -221,7 +221,7 @@ func (s *Scheduler) tickPendingTrigger(st *state.State, now time.Time) error {
 }
 
 func (s *Scheduler) tickWarned(st *state.State, now time.Time) error {
-	if s.due(st.WarnedAt, s.cfg.TargetFlow.PasswordDelayAfterWarn.Std(), now) {
+	if stageDue(st.WarnedAt, s.cfg.TargetFlow.PasswordDelayAfterWarn, s.cfg.TargetFlow, now) {
 		if !s.deliverOwnerStageReminder(state.StagePasswordTelegram, state.StagePassword, now) {
 			return s.store.Save(st)
 		}
@@ -238,7 +238,7 @@ func (s *Scheduler) tickWarned(st *state.State, now time.Time) error {
 			_ = s.store.Audit("archive_password_read_failed", err.Error(), now)
 			return s.store.Save(st)
 		}
-		fileLinkSendDate := now.Add(s.cfg.TargetFlow.FileDelayAfterPassword.Std())
+		fileLinkSendDate := nextStageTime(now, s.cfg.TargetFlow.FileDelayAfterPassword, s.cfg.TargetFlow, loadLocation(s.cfg.TargetFlow.Timezone))
 		allDelivered := true
 		for _, b := range s.cfg.Beneficiaries {
 			if !s.deliver(b.Email, state.StagePassword, now, func() error {
@@ -261,7 +261,7 @@ func (s *Scheduler) tickWarned(st *state.State, now time.Time) error {
 }
 
 func (s *Scheduler) tickPasswordSent(st *state.State, now time.Time) error {
-	if s.due(st.PasswordSentAt, s.cfg.TargetFlow.FileDelayAfterPassword.Std(), now) {
+	if stageDue(st.PasswordSentAt, s.cfg.TargetFlow.FileDelayAfterPassword, s.cfg.TargetFlow, now) {
 		if !s.deliverOwnerStageReminder(state.StageFileTelegram, state.StageFile, now) {
 			return s.store.Save(st)
 		}
@@ -405,7 +405,7 @@ func ptr(t time.Time) *time.Time {
 
 func shouldSendMonthlyCheckin(lastSent *time.Time, flow config.TargetFlow, now time.Time) bool {
 	loc := loadLocation(flow.Timezone)
-	current := monthlyCheckinTime(now, flow.CheckinDayOfMonth, loc)
+	current := monthlyCheckinTime(now, flow.CheckinDayOfMonth, flow.SendTimeOfDay, loc)
 	if now.Before(current) {
 		return false
 	}
@@ -422,21 +422,30 @@ func hasOutstandingCheckin(st *state.State) bool {
 	return st.LastConfirmedAt == nil || st.LastConfirmedAt.Before(*st.LastCheckinSentAt)
 }
 
-func monthlyCheckinTime(now time.Time, day int, loc *time.Location) time.Time {
+func monthlyCheckinTime(now time.Time, day int, sendTime string, loc *time.Location) time.Time {
 	local := now.In(loc)
 	y, m, _ := local.Date()
 	maxDay := daysInMonth(y, m)
 	if day > maxDay {
 		day = maxDay
 	}
-	return time.Date(y, m, day, 0, 0, 0, 0, loc).UTC()
+	hour, minute := parseTimeOfDay(sendTime)
+	return localDateTime(y, m, day, hour, minute, loc)
 }
 
 func daysInMonth(year int, month time.Month) int {
 	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
-func remindersSent(checkinSentAt time.Time, now time.Time, interval time.Duration) int {
+func remindersSent(checkinSentAt time.Time, now time.Time, flow config.TargetFlow, loc *time.Location) int {
+	if flow.ReminderInterval.IsDayBased() {
+		days, _ := flow.ReminderInterval.DayCount()
+		if days <= 0 {
+			days = 1
+		}
+		return countElapsedDayBasedStages(checkinSentAt, now, days, flow.SendTimeOfDay, loc)
+	}
+	interval := flow.ReminderInterval.Std()
 	if interval <= 0 {
 		interval = 24 * time.Hour
 	}
@@ -444,6 +453,61 @@ func remindersSent(checkinSentAt time.Time, now time.Time, interval time.Duratio
 		return 0
 	}
 	return int(now.Sub(checkinSentAt) / interval)
+}
+
+func stageDue(t *time.Time, delay config.Duration, flow config.TargetFlow, now time.Time) bool {
+	if t == nil {
+		return true
+	}
+	if delay.IsDayBased() {
+		loc := loadLocation(flow.Timezone)
+		return !now.Before(nextStageTime(*t, delay, flow, loc))
+	}
+	return now.Sub(*t) >= delay.Std()
+}
+
+func nextStageTime(base time.Time, delay config.Duration, flow config.TargetFlow, loc *time.Location) time.Time {
+	if delay.IsDayBased() {
+		days, _ := delay.DayCount()
+		if days <= 0 {
+			days = 1
+		}
+		return addLocalDaysAtTime(base, days, flow.SendTimeOfDay, loc)
+	}
+	return base.Add(delay.Std())
+}
+
+func countElapsedDayBasedStages(base time.Time, now time.Time, dayStep int, sendTime string, loc *time.Location) int {
+	if dayStep <= 0 {
+		dayStep = 1
+	}
+	count := 0
+	for {
+		due := addLocalDaysAtTime(base, (count+1)*dayStep, sendTime, loc)
+		if now.Before(due) {
+			return count
+		}
+		count++
+	}
+}
+
+func addLocalDaysAtTime(base time.Time, days int, sendTime string, loc *time.Location) time.Time {
+	local := base.In(loc)
+	hour, minute := parseTimeOfDay(sendTime)
+	target := local.AddDate(0, 0, days)
+	y, m, d := target.Date()
+	return localDateTime(y, m, d, hour, minute, loc)
+}
+
+func localDateTime(year int, month time.Month, day, hour, minute int, loc *time.Location) time.Time {
+	return time.Date(year, month, day, hour, minute, 0, 0, loc).UTC()
+}
+
+func parseTimeOfDay(s string) (hour, minute int) {
+	if _, err := fmt.Sscanf(s, "%d:%d", &hour, &minute); err != nil {
+		return 0, 0
+	}
+	return hour, minute
 }
 
 func loadLocation(name string) *time.Location {

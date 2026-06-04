@@ -28,10 +28,10 @@ func e2eConfig(stateDir string) *config.Config {
 	cfg.SourceDir = filepath.Join(stateDir, "source")
 	cfg.TargetFlow.CheckinDayOfMonth = 1
 	cfg.TargetFlow.ReminderCount = 1
-	cfg.TargetFlow.ReminderInterval = config.Duration(24 * time.Hour)
-	cfg.TargetFlow.PasswordDelayAfterWarn = config.Duration(time.Minute)
-	cfg.TargetFlow.FileDelayAfterPassword = config.Duration(time.Minute)
-	cfg.Download.LinkExpiry = config.Duration(time.Hour)
+	cfg.TargetFlow.ReminderInterval = config.DayDuration(1)
+	cfg.TargetFlow.PasswordDelayAfterWarn = config.DurationFromStd(time.Minute)
+	cfg.TargetFlow.FileDelayAfterPassword = config.DurationFromStd(time.Minute)
+	cfg.Download.LinkExpiry = config.DurationFromStd(time.Hour)
 	cfg.Download.MaxDownloads = 2
 	cfg.StateProtection.EncryptPasswordField = true
 	cfg.StateProtection.MasterPassphrase = "master-passphrase"

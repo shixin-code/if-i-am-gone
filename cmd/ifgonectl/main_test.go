@@ -33,9 +33,10 @@ state_dir: ` + stateDir + `
 target_flow:
   checkin_day_of_month: 1
   reminder_count: 7
-  reminder_interval: 24h
-  password_delay_after_warn: 72h
-  file_delay_after_password: 168h
+  reminder_interval: 1d
+  password_delay_after_warn: 3d
+  file_delay_after_password: 7d
+  send_time_of_day: 10:30
   timezone: UTC
 archive:
   keep_archives: 3
@@ -114,6 +115,9 @@ func TestStatusAndDryRun(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "next_action:") {
 		t.Fatalf("dry-run 输出不对: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "10:30") {
+		t.Fatalf("dry-run 应展示 10:30 发送时间: %s", out.String())
 	}
 }
 

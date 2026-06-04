@@ -79,11 +79,15 @@ docker compose logs -f
 | 参数 | 含义 | 默认示例 |
 |---|---|---|
 | `checkin_day_of_month` | 每月几号发送安全确认 | `1` |
+| `send_time_of_day` | 月度确认与按天语义阶段的发送时间（本地时区 HH:MM） | `10:30` |
 | `reminder_count` | 未确认后连续提醒几次 | `7` |
-| `reminder_interval` | 两次提醒间隔（Go duration） | `24h` |
-| `password_delay_after_warn` | 预提醒邮件成功后多久发送密码 | `72h` |
-| `file_delay_after_password` | 密码邮件成功后多久发送下载链接 | `168h` |
+| `reminder_interval` | 两次提醒间隔（支持 Go duration，也支持整数天 `d`） | `1d` |
+| `password_delay_after_warn` | 预提醒邮件成功后多久发送密码 | `3d` |
+| `file_delay_after_password` | 密码邮件成功后多久发送下载链接 | `7d` |
 | `timezone` | 月度确认日和预计日期展示时区 | `Asia/Shanghai` |
+
+按天语义推荐写 `1d`、`3d`、`7d`；需要精确小时或分钟时继续写 `72h`、`90m` 这类 Go duration。
+`send_time_of_day` 只作用于 `target_flow` 下的月度确认，以及 `reminder_interval` / `password_delay_after_warn` / `file_delay_after_password` 这些按天语义的 `d` 配置；像 `72h`、`90m` 仍按精确 duration 触发。
 
 `state_protection.encrypt_password_field: true` 时，必须在 `.env` 配置 `MASTER_PASSPHRASE`。已有旧明文 state 可兼容读取；新打包产生的密码会以加密形式写入 `state.db`。
 

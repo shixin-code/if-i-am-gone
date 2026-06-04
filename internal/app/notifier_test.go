@@ -65,13 +65,13 @@ func testNotifierConfig() *config.Config {
 	return &config.Config{
 		SMTP: config.SMTP{FromName: "主人"},
 		TargetFlow: config.TargetFlow{
-			PasswordDelayAfterWarn: config.Duration(72 * time.Hour),
-			FileDelayAfterPassword: config.Duration(168 * time.Hour),
+			PasswordDelayAfterWarn: config.DayDuration(3),
+			FileDelayAfterPassword: config.DayDuration(7),
 			Timezone:               "UTC",
 		},
 		Download: config.Download{
 			Mode:         configDownloadSelfHosted,
-			LinkExpiry:   config.Duration(24 * time.Hour),
+			LinkExpiry:   config.DayDuration(1),
 			MaxDownloads: 3,
 			SelfHosted:   config.SelfHostedConfig{PublicBaseURL: "https://example.com"},
 		},
@@ -222,7 +222,7 @@ func TestNotifierDeliverFileUsesS3PresignedLink(t *testing.T) {
 		Region:        "us-east-1",
 		AccessKey:     "key",
 		SecretKey:     "secret",
-		PresignExpiry: config.Duration(12 * time.Hour),
+		PresignExpiry: config.DurationFromStd(12 * time.Hour),
 	}
 	store := newAppMemoryStore()
 	dl := download.NewServiceWithS3ForTest(cfg, store, appFakeS3Linker{

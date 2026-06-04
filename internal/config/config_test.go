@@ -84,17 +84,35 @@ func TestLoadExpandsEnvAndAppliesDefaults(t *testing.T) {
 	if cfg.TargetFlow.ReminderCount != 7 {
 		t.Fatalf("默认连续提醒次数不对: %d", cfg.TargetFlow.ReminderCount)
 	}
+	if cfg.TargetFlow.ReminderInterval.Std() != 24*time.Hour {
+		t.Fatalf("提醒间隔默认值不对: %s", cfg.TargetFlow.ReminderInterval.Std())
+	}
+	if !cfg.TargetFlow.ReminderInterval.IsDayBased() {
+		t.Fatal("默认提醒间隔应保留按天语义")
+	}
 	if cfg.TargetFlow.PasswordDelayAfterWarn.Std() != 72*time.Hour {
 		t.Fatalf("密码延迟默认值不对: %s", cfg.TargetFlow.PasswordDelayAfterWarn.Std())
 	}
+	if !cfg.TargetFlow.PasswordDelayAfterWarn.IsDayBased() {
+		t.Fatal("默认密码延迟应保留按天语义")
+	}
 	if cfg.TargetFlow.FileDelayAfterPassword.Std() != 168*time.Hour {
 		t.Fatalf("文件延迟默认值不对: %s", cfg.TargetFlow.FileDelayAfterPassword.Std())
+	}
+	if !cfg.TargetFlow.FileDelayAfterPassword.IsDayBased() {
+		t.Fatal("默认文件延迟应保留按天语义")
+	}
+	if cfg.TargetFlow.SendTimeOfDay != "00:00" {
+		t.Fatalf("默认发送时间不对: %s", cfg.TargetFlow.SendTimeOfDay)
 	}
 	if cfg.TargetFlow.Timezone != "Asia/Shanghai" {
 		t.Fatalf("默认时区不对: %s", cfg.TargetFlow.Timezone)
 	}
 	if cfg.Download.LinkExpiry.Std() != 336*time.Hour || cfg.Download.MaxDownloads != 5 || cfg.Download.SelfHosted.ListenPort != 8080 {
 		t.Fatalf("下载默认值不对: expiry=%s max=%d port=%d", cfg.Download.LinkExpiry.Std(), cfg.Download.MaxDownloads, cfg.Download.SelfHosted.ListenPort)
+	}
+	if !cfg.Download.LinkExpiry.IsDayBased() {
+		t.Fatal("默认下载有效期应保留按天语义")
 	}
 	if cfg.Reliability.Healthcheck.Interval.Std() != 10*time.Minute || cfg.Reliability.Healthcheck.Timeout.Std() != 10*time.Second {
 		t.Fatalf("探活默认值不对: interval=%s timeout=%s", cfg.Reliability.Healthcheck.Interval.Std(), cfg.Reliability.Healthcheck.Timeout.Std())
@@ -129,6 +147,7 @@ target_flow:
   reminder_interval: -1s
   password_delay_after_warn: -1s
   file_delay_after_password: -1s
+  send_time_of_day: 24:00
   timezone: Not/AZone
 `
 	raw = strings.Replace(raw, "    public_base_url: \"\"", "    public_base_url: \"\"\n    listen_port: 70000", 1)
@@ -142,6 +161,7 @@ target_flow:
 		"target_flow.reminder_count",
 		"target_flow.password_delay_after_warn",
 		"target_flow.file_delay_after_password",
+		"target_flow.send_time_of_day",
 		"target_flow.timezone",
 		"download.link_expiry",
 		"download.max_downloads",
@@ -297,6 +317,20 @@ func TestDurationBytesAndLangFallback(t *testing.T) {
 	if d.Std() != 90*time.Minute {
 		t.Fatalf("duration=%s", d.Std())
 	}
+	if d.IsDayBased() {
+		t.Fatal("90m 不应被视为按天语义")
+	}
+	var day Duration
+	if err := day.UnmarshalYAML(textNode("3d")); err != nil {
+		t.Fatal(err)
+	}
+	if day.Std() != 72*time.Hour {
+		t.Fatalf("3d 标准时长不对: %s", day.Std())
+	}
+	days, ok := day.DayCount()
+	if !ok || days != 3 || !day.IsDayBased() {
+		t.Fatalf("3d 语义信息不对: ok=%v days=%d dayBased=%v", ok, days, day.IsDayBased())
+	}
 	var b Bytes
 	if err := b.UnmarshalYAML(textNode("1.5MB")); err != nil {
 		t.Fatal(err)
@@ -307,5 +341,13 @@ func TestDurationBytesAndLangFallback(t *testing.T) {
 	cfg := &Config{Templates: map[string]Templates{"zh": {CheckinTelegram: "中文"}}}
 	if cfg.Lang("en").CheckinTelegram != "中文" {
 		t.Fatal("语言缺失时应回退 zh")
+	}
+}
+
+func TestDurationRejectsFractionalDays(t *testing.T) {
+	var d Duration
+	err := d.UnmarshalYAML(textNode("1.5d"))
+	if err == nil || !strings.Contains(err.Error(), "无法解析时长") {
+		t.Fatalf("期望 1.5d 被拒绝，实际 %v", err)
 	}
 }

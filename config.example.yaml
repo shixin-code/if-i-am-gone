@@ -1,5 +1,6 @@
 # if-i-am-gone 配置示例 —— 复制为 config.yaml 并按需修改。
-# 时间单位用 Go duration 写法：h(小时)、m(分钟)、s(秒)，如 24h、72h、30m。
+# 时间单位支持 Go duration 与整数天：h(小时)、m(分钟)、s(秒)、d(天)。
+# 例如 30m、12h、3d；推荐按天语义写 3d/7d，需要精确小时再写 72h。
 # ${VAR} 占位符会从环境变量展开（见 .env.example）。
 
 source_dir: /data/source             # 挂载进容器、待打包加密的目录
@@ -8,10 +9,11 @@ state_dir: /data/state               # state.db、加密包、日志的存放目
 # 目标流程配置：当前调度主流程读取这些字段。
 target_flow:
   checkin_day_of_month: 1            # 每月几号发送安全确认
+  send_time_of_day: "10:30"          # 月度确认与按天语义阶段的发送时间（本地时区 HH:MM）
   reminder_count: 7                  # 未确认后连续提醒几次
-  reminder_interval: 24h             # 两次提醒间隔（Go duration: 1m/2h/24h；测试可设 1m 快速演练）
-  password_delay_after_warn: 72h     # 预提醒邮件成功后多久发送密码
-  file_delay_after_password: 168h    # 密码邮件成功后多久发送下载链接
+  reminder_interval: 1d              # 两次提醒间隔（支持 1m/2h/72h，也支持按天语义 1d/7d；测试可设 1m 快速演练）
+  password_delay_after_warn: 3d      # 预提醒邮件成功后多久发送密码
+  file_delay_after_password: 7d      # 密码邮件成功后多久发送下载链接
   timezone: Asia/Shanghai            # 月度确认日和预计发送日期展示时区
 
 archive:
@@ -38,7 +40,7 @@ beneficiaries:                       # 受益人（家人）列表
 
 download:
   mode: self_hosted                  # self_hosted | s3
-  link_expiry: 336h                  # 下载链接有效期（14天）
+  link_expiry: 14d                   # 下载链接有效期（14天）
   max_downloads: 5
   self_hosted:
     public_base_url: https://my-vps.example.com
@@ -49,7 +51,7 @@ download:
     region: us-east-1
     access_key: ${S3_ACCESS_KEY}
     secret_key: ${S3_SECRET_KEY}
-    presign_expiry: 168h
+    presign_expiry: 7d
 
 state_protection:
   encrypt_password_field: false      # true 时加密 state.db 中保存的归档密码
@@ -57,7 +59,7 @@ state_protection:
 
 reliability:
   heartbeat_enabled: false           # 默认不发送巡检心跳，避免 Telegram 文本消息过多
-  heartbeat_interval: 168h           # 开启 heartbeat_enabled 后，每 7 天给用户发一次巡检心跳
+  heartbeat_interval: 7d             # 开启 heartbeat_enabled 后，每 7 天给用户发一次巡检心跳
   healthcheck:
     enabled: false                    # true 时定时访问第三方探活 ping URL
     ping_url: ${HEALTHCHECK_PING_URL} # 例如 https://hc-ping.com/你的-uuid

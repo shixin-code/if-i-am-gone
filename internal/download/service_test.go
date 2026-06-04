@@ -52,7 +52,7 @@ func testConfig() *config.Config {
 	return &config.Config{
 		Download: config.Download{
 			Mode:         "self_hosted",
-			LinkExpiry:   config.Duration(24 * time.Hour),
+			LinkExpiry:   config.DayDuration(1),
 			MaxDownloads: 2,
 			SelfHosted:   config.SelfHostedConfig{PublicBaseURL: "https://example.com/base"},
 		},
@@ -105,7 +105,7 @@ func TestCreateS3LinkUploadsAndPresignsWithoutLocalToken(t *testing.T) {
 		Region:        "us-east-1",
 		AccessKey:     "key",
 		SecretKey:     "secret",
-		PresignExpiry: config.Duration(6 * time.Hour),
+		PresignExpiry: config.DurationFromStd(6 * time.Hour),
 	}
 	store := newMemoryStore()
 	expiresAt := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)

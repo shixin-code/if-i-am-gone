@@ -34,7 +34,7 @@ func TestHealthcheckPingOnceRecordsSuccess(t *testing.T) {
 	runner := NewHealthcheckRunnerForTest(config.HealthcheckConfig{
 		Enabled: true,
 		PingURL: server.URL,
-		Timeout: config.Duration(time.Second),
+		Timeout: config.DurationFromStd(time.Second),
 	}, store, server.Client(), func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }, nil)
 
 	if err := runner.PingOnce(context.Background()); err != nil {
@@ -57,7 +57,7 @@ func TestHealthcheckPingOnceRecordsFailureWithoutPanic(t *testing.T) {
 	runner := NewHealthcheckRunnerForTest(config.HealthcheckConfig{
 		Enabled: true,
 		PingURL: server.URL,
-		Timeout: config.Duration(time.Second),
+		Timeout: config.DurationFromStd(time.Second),
 	}, store, server.Client(), func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }, nil)
 
 	err := runner.PingOnce(context.Background())

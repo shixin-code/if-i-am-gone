@@ -111,9 +111,10 @@ func newTestSchedulerCfg(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier,
 		TargetFlow: config.TargetFlow{
 			CheckinDayOfMonth:      1,
 			ReminderCount:          7,
-			ReminderInterval:       config.Duration(24 * time.Hour),
-			PasswordDelayAfterWarn: config.Duration(72 * time.Hour),
-			FileDelayAfterPassword: config.Duration(96 * time.Hour),
+			ReminderInterval:       config.DayDuration(1),
+			PasswordDelayAfterWarn: config.DayDuration(3),
+			FileDelayAfterPassword: config.DayDuration(4),
+			SendTimeOfDay:          "00:00",
 			Timezone:               "UTC",
 		},
 		Archive: config.Archive{KeepArchives: 3, PasswordLength: 32, LargeFileThreshold: config.Bytes(20 << 20)},
@@ -121,7 +122,7 @@ func newTestSchedulerCfg(t *testing.T) (*Scheduler, *state.Store, *fakeNotifier,
 			{Name: "A", Email: "a@example.com", Lang: "zh"},
 			{Name: "B", Email: "b@example.com", Lang: "zh"},
 		},
-		Reliability: config.Reliability{HeartbeatEnabled: true, HeartbeatInterval: config.Duration(168 * time.Hour)},
+		Reliability: config.Reliability{HeartbeatEnabled: true, HeartbeatInterval: config.DayDuration(7)},
 	}
 	n := newFakeNotifier()
 	p := &fakePacker{}
@@ -252,7 +253,7 @@ func TestMonthlyReminderProgression(t *testing.T) {
 func TestMinuteLevelReminderInterval(t *testing.T) {
 	s, store, n, _, cfg := newTestSchedulerCfg(t)
 	cfg.TargetFlow.ReminderCount = 2
-	cfg.TargetFlow.ReminderInterval = config.Duration(time.Minute)
+	cfg.TargetFlow.ReminderInterval = config.DurationFromStd(time.Minute)
 	setConfirmed(t, store, base.Add(-time.Hour))
 
 	_ = s.Tick(base) // D0 发本月确认
@@ -281,6 +282,96 @@ func TestMinuteLevelReminderInterval(t *testing.T) {
 	st, _ = store.Load()
 	if st.Phase != state.PhasePendingTrigger {
 		t.Fatalf("提醒期结束后应为 PENDING_TRIGGER，实际 %s", st.Phase)
+	}
+}
+
+func TestMonthlyCheckinRespectsSendTimeOfDay(t *testing.T) {
+	s, store, n, _, cfg := newTestSchedulerCfg(t)
+	cfg.TargetFlow.SendTimeOfDay = "10:30"
+	setConfirmed(t, store, base.Add(-time.Hour))
+
+	_ = s.Tick(time.Date(2026, 1, 1, 10, 29, 0, 0, time.UTC))
+	if n.checkins != 0 {
+		t.Fatalf("10:30 前不应发送月度确认，实际 %d", n.checkins)
+	}
+
+	_ = s.Tick(time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC))
+	if n.checkins != 1 {
+		t.Fatalf("10:30 应发送月度确认，实际 %d", n.checkins)
+	}
+}
+
+func TestDayBasedReminderIntervalAlignsToSendTimeOfDay(t *testing.T) {
+	s, store, n, _, cfg := newTestSchedulerCfg(t)
+	cfg.TargetFlow.SendTimeOfDay = "10:30"
+	setConfirmed(t, store, time.Date(2025, 12, 31, 9, 0, 0, 0, time.UTC))
+
+	checkinAt := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
+	_ = s.Tick(checkinAt)
+	if n.checkins != 1 {
+		t.Fatalf("应发送月度确认，实际 %d", n.checkins)
+	}
+
+	_ = s.Tick(time.Date(2026, 1, 2, 10, 29, 0, 0, time.UTC))
+	if len(n.dailyReminders) != 0 {
+		t.Fatalf("10:30 前不应发送提醒，实际 %+v", n.dailyReminders)
+	}
+
+	_ = s.Tick(time.Date(2026, 1, 2, 10, 30, 0, 0, time.UTC))
+	if len(n.dailyReminders) != 1 || n.dailyReminders[0] != 1 {
+		t.Fatalf("10:30 应发送第 1 次提醒，实际 %+v", n.dailyReminders)
+	}
+}
+
+func TestDayBasedPasswordAndFileDelayAlignToSendTimeOfDay(t *testing.T) {
+	s, store, _, _, cfg := newTestSchedulerCfg(t)
+	cfg.TargetFlow.SendTimeOfDay = "10:30"
+
+	warnedAt := time.Date(2026, 1, 4, 18, 0, 0, 0, time.UTC)
+	passwordDue := nextStageTime(warnedAt, cfg.TargetFlow.PasswordDelayAfterWarn, cfg.TargetFlow, time.UTC)
+	wantPasswordDue := time.Date(2026, 1, 7, 10, 30, 0, 0, time.UTC)
+	if !passwordDue.Equal(wantPasswordDue) {
+		t.Fatalf("密码阶段目标时间不对: got=%s want=%s", passwordDue, wantPasswordDue)
+	}
+
+	st, _ := store.Load()
+	st.Phase = state.PhaseWarned
+	st.WarnedAt = ptr(warnedAt)
+	st.PendingToken = "tok-fixed"
+	if err := store.Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = s.Tick(time.Date(2026, 1, 7, 10, 29, 0, 0, time.UTC))
+	st, _ = store.Load()
+	if st.Phase != state.PhaseWarned {
+		t.Fatalf("10:30 前不应进入密码阶段，实际 %s", st.Phase)
+	}
+
+	_ = s.Tick(time.Date(2026, 1, 7, 10, 30, 0, 0, time.UTC))
+	st, _ = store.Load()
+	if st.Phase != state.PhasePasswordSent {
+		t.Fatalf("10:30 应进入密码阶段，实际 %s", st.Phase)
+	}
+
+	fileDue := nextStageTime(*st.PasswordSentAt, cfg.TargetFlow.FileDelayAfterPassword, cfg.TargetFlow, time.UTC)
+	wantFileDue := time.Date(2026, 1, 11, 10, 30, 0, 0, time.UTC)
+	if !fileDue.Equal(wantFileDue) {
+		t.Fatalf("文件阶段目标时间不对: got=%s want=%s", fileDue, wantFileDue)
+	}
+}
+
+func TestHourBasedPasswordDelayStillUsesExactDuration(t *testing.T) {
+	cfg := config.TargetFlow{
+		PasswordDelayAfterWarn: config.DurationFromStd(72 * time.Hour),
+		SendTimeOfDay:          "10:30",
+		Timezone:               "UTC",
+	}
+	baseTime := time.Date(2026, 1, 4, 18, 0, 0, 0, time.UTC)
+	got := nextStageTime(baseTime, cfg.PasswordDelayAfterWarn, cfg, time.UTC)
+	want := baseTime.Add(72 * time.Hour)
+	if !got.Equal(want) {
+		t.Fatalf("72h 不应被对齐到 10:30: got=%s want=%s", got, want)
 	}
 }
 
@@ -548,8 +639,8 @@ func TestNoPackBeforePasswordStage(t *testing.T) {
 func TestMonthlyCheckinTimeClampsMonthEnd(t *testing.T) {
 	loc := time.UTC
 	now := time.Date(2026, 2, 28, 1, 0, 0, 0, time.UTC)
-	got := monthlyCheckinTime(now, 31, loc)
-	want := time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC)
+	got := monthlyCheckinTime(now, 31, "10:30", loc)
+	want := time.Date(2026, 2, 28, 10, 30, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Fatalf("got %s want %s", got, want)
 	}
